@@ -1,5 +1,8 @@
 #!/bin/bash
-mock_root=/global/cfs/cdirs/desi/public/dr1/survey/catalogs/dr1/mocks
+# Licensed under a 3-clause BSD style license - see LICENSE.rst.
+release=dr1
+jobs=${CFS}/desicollab/users/${USER}/jobs
+mock_root=${CFS}/desi/public/${release}/survey/catalogs/${release}/mocks
 for mock in AbacusSummit EZmock; do
     for obs in bright dark; do
         ver='v1'
@@ -19,11 +22,13 @@ for mock in AbacusSummit EZmock; do
             backups+=(${b})
         done
         for d in ${backups[@]}; do
-            jobName=dr1_survey_catalogs_dr1_mocks_${mock}_${obs}_${ver}_${d}
-            if [[ -f ./${jobName}.sh ]]; then
-               rm -f ./${jobName}.sh
+            jobName=${release}_survey_catalogs_${release}_mocks_${mock}_${obs}_${ver}_${d}
+            echo "DEBUG: jobName=${jobName}"
+            if [[ -f ${jobs}/${jobName}.sh ]]; then
+               echo "DEBUG: rm -f ${jobs}/${jobName}.sh"
+               rm -f ${jobs}/${jobName}.sh
             fi
-            cat > ./${jobName}.sh <<EOSLURM
+            cat > ${jobs}/${jobName}.sh <<EOSLURM
 #!/bin/bash
 #SBATCH --account=desi
 #SBATCH --qos=xfer
@@ -31,12 +36,12 @@ for mock in AbacusSummit EZmock; do
 #SBATCH --time=12:00:00
 #SBATCH --mem=10GB
 #SBATCH --job-name=${jobName}
-#SBATCH --output=/global/cfs/cdirs/desicollab/users/desi/jobs/%x-%j.log
+#SBATCH --output=${jobs}/%x-%j.log
 #SBATCH --licenses=cfs,hpss
 # set -o xtrace
-cfs_root=/global/cfs/cdirs/desi/public
+cfs_root=\${CFS}/desi/public
 hpss_root=desi/public
-job_dir=/global/cfs/cdirs/desicollab/users/\${USER}/jobs
+job_dir=${jobs}
 htar_path=\$(tr '_' '/' <<<\${SLURM_JOB_NAME})
 htar_dir=\$(dirname \${htar_path})
 htar_subdir=\$(basename \${htar_path})
@@ -49,7 +54,8 @@ htar -cvf \${hpss_root}/\${htar_dir}/\${SLURM_JOB_NAME}.tar -H crc:verify=all \$
 [[ \$? == 0 ]] && mv -v \${job_dir}/\${SLURM_JOB_NAME}.sh \${job_dir}/done
 EOSLURM
 
-        chmod +x ./${jobName}.sh
+        echo "DEBUG: chmod +x ${jobs}/${jobName}.sh"
+        chmod +x ${jobs}/${jobName}.sh
         done
     done
 done
