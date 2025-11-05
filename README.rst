@@ -10,10 +10,16 @@ Code, scripts and configuration to assist with DESI Data Assemblies and Releases
 Change Log
 ----------
 
-1.0.1 (unreleased)
+1.1.0 (2025-11-05)
 ~~~~~~~~~~~~~~~~~~
 
-* No changes yet.
+* Add backup generator for Post-DR1 LSS mocks (PR `#55`_).
+* Support moving DR2 raw data to public (PR `#52`_).
+* Add script to fetch GitHub tags (PR `#51`_).
+
+.. _`#51`: https://github.com/desihub/desida/pull/51
+.. _`#52`: https://github.com/desihub/desida/pull/52
+.. _`#55`: https://github.com/desihub/desida/pull/55
 
 1.0.0 (2025-03-18)
 ~~~~~~~~~~~~~~~~~~
