@@ -30,6 +30,8 @@ import sys
 import urllib.parse
 from pathlib import Path
 from typing import Set, List
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo  # Requires Python 3.9+
 
 import requests
 
@@ -67,11 +69,14 @@ def parse_repo_url(url: str) -> tuple[str, str]:
     return owner, repo
 
 
-def get_closed_pr_numbers(owner: str,
-                          repo: str,
-                          token: str | None = None) -> Set[int]:
-    """Return all **merged** PR numbers for the repository (i.e. closed by merging)."""
-    prs: Set[int] = set()
+def get_merged_prs(owner: str,
+                   repo: str,
+                   token: str | None = None) -> dict[int, datetime]:
+    """
+    Return a mapping {pr_number: merged_at_datetime} for every PR that was
+    merged (i.e. closed by merge).
+    """
+    prs: dict[int, datetime] = {}
     page = 1
     while True:
         url = f"{GITHUB_API}/repos/{owner}/{repo}/pulls"
@@ -80,12 +85,13 @@ def get_closed_pr_numbers(owner: str,
         if not data:
             break
 
-        # Keep only PRs that were merged (GitHub marks them with "merged": true
-        # or a non‑null "merged_at" timestamp).
         for pr in data:
-            if pr.get("merged") or pr.get("merged_at"):
-                prs.add(pr["number"])
-
+            # ``merged_at`` is null for non‑merged closed PRs.
+            merged_at = pr.get("merged_at")
+            if merged_at:
+                # GitHub timestamps are ISO‑8601 UTC strings
+                merged_dt = datetime.fromisoformat(merged_at.rstrip("Z")).replace(tzinfo=timezone.utc)
+                prs[pr["number"]] = merged_dt
         page += 1
     return prs
 
@@ -96,13 +102,80 @@ def fetch_changes_rst(owner: str, repo: str, token: str | None = None) -> str:
     return _github_get(raw_url, token=token).text
 
 
+def _get_tag_commit_date(owner: str, repo: str, tag_sha: str,
+                         token: str | None = None) -> datetime:
+    """
+    Return the datetime of the commit that a tag points to.
+    Works for both annotated and lightweight tags.
+    """
+    # First try to treat the SHA as an *annotated* tag object.
+    tag_url = f"{GITHUB_API}/repos/{owner}/{repo}/git/tags/{tag_sha}"
+    try:
+        tag_obj = _github_get(tag_url, token=token).json()
+        # Annotated tags have a ``tagger`` field with a ``date``.
+        date_str = tag_obj.get("tagger", {}).get("date")
+        if date_str:
+            return datetime.fromisoformat(date_str.rstrip("Z")).replace(tzinfo=timezone.utc)
+    except requests.HTTPError:
+        # If the request fails we fall back to treating it as a lightweight tag.
+        pass
+
+    # Lightweight tag – fetch the commit it points to.
+    commit_url = f"{GITHUB_API}/repos/{owner}/{repo}/commits/{tag_sha}"
+    commit_obj = _github_get(commit_url, token=token).json()
+    date_str = commit_obj["commit"]["committer"]["date"]
+    return datetime.fromisoformat(date_str.rstrip("Z")).replace(tzinfo=timezone.utc)
+
+
+def get_tags_with_dates(owner: str,
+                        repo: str,
+                        token: str | None = None) -> list[tuple[str, datetime]]:
+    """
+    Return a list ``[(tag_name, tag_date), ...]`` sorted by ``tag_date`` (oldest -> newest).
+    """
+    tags: list[tuple[str, datetime]] = []
+    page = 1
+    while True:
+        url = f"{GITHUB_API}/repos/{owner}/{repo}/tags"
+        params = {"per_page": PER_PAGE, "page": page}
+        data = _github_get(url, token=token, params=params).json()
+        if not data:
+            break
+
+        for tag in data:
+            name = tag["name"]
+            sha = tag["commit"]["sha"]
+            tag_date = _get_tag_commit_date(owner, repo, sha, token=token)
+            tags.append((name, tag_date))
+        page += 1
+
+    tags.sort(key=lambda t: t[1])          # chronological order
+    return tags
+
+
+def group_prs_by_next_tag(prs: dict[int, datetime],
+                          tags: list[tuple[str, datetime]]) -> dict[str, list[int]]:
+    """
+    For each PR, find the first tag whose date is later than the PR’s merge date.
+    Returns a mapping ``{tag_name: [pr_numbers...]}``.  PRs that have no later tag
+    are grouped under the special key ``'NO_TAG'``.
+    """
+    grouped: dict[str, list[int]] = {}
+    for pr_num, merged_dt in prs.items():
+        tag_name = "NO_TAG"
+        for name, tag_dt in tags:
+            if tag_dt > merged_dt:
+                tag_name = name
+                break
+        grouped.setdefault(tag_name, []).append(pr_num)
+    return grouped
+
+
 # ----------------------------------------------------------------------
-# Parsing ``changes.rst``
+# Parsing ``changes.rst`` for tag numbers; supports either
+# .. _`PR #864`: https://github.com/desihub/desitarget/pull/864
+# .. _`#225`: https://github.com/desihub/desiutil/pull/225
 # ----------------------------------------------------------------------
-_LINE_RE = re.compile(
-    r"""^\s*\.\.\s+_`#(?P<num>\d+)`:\s+https?://github\.com/"""
-    r"""(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P=num)\s*$"""
-)
 
 _LINE_RE = re.compile(
     r"""^\s*\.\.\s+_`[^`]+`:\s+https?://github\.com/"""
@@ -148,6 +221,8 @@ def main() -> None:
                    help="Output reStructuredText entries ready for changes.rst.")
     p.add_argument("-o", "--output", type=Path, default=None,
                    help="Write result to this file; otherwise print to stdout.")
+    p.add_argument("--debug", action="store_true",
+                   help="Start IPython prompt at end instead of exiting.")
     args = p.parse_args()
 
     # ------------------------------------------------------------------
@@ -166,46 +241,63 @@ def main() -> None:
     print(f"Found {len(file_prs)} PR references in doc/changes.rst", file=sys.stderr)
 
     # ------------------------------------------------------------------
-    # Get all closed PR numbers from GitHub
+    # Get all merged PR numbers from GitHub
     # ------------------------------------------------------------------
-    closed_prs = get_closed_pr_numbers(owner, repo, token=args.token)
-    print(f"Retrieved {len(closed_prs)} closed PRs from GitHub", file=sys.stderr)
+    merged_prs = get_merged_prs(owner, repo, token=args.token)      # {num: datetime}
+    print(f"Retrieved {len(merged_prs)} merged PRs from GitHub", file=sys.stderr)
 
     # ------------------------------------------------------------------
     # Compute missing PRs and apply optional ``--after`` filter
     # ------------------------------------------------------------------
-    missing = sorted(closed_prs - file_prs)
+    missing_prs = {num: dt for num, dt in merged_prs.items() if num not in file_prs}
     if args.after is not None:
-        missing = [n for n in missing if n > args.after]
-    print(f"{len(missing)} closed PRs are NOT mentioned in changes.rst after filtering.", file=sys.stderr)
+        missing_prs = {num: dt for num, dt in missing_prs.items() if num > args.after}
+    print(f"{len(missing_prs)} merged PRs are NOT mentioned in changes.rst after filtering.",
+          file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Load tags (chronological) and group PRs by first tag after merge
+    # ------------------------------------------------------------------
+    tags = get_tags_with_dates(owner, repo, token=args.token)
+    tag_datetimes = dict(tags)  # list[(tag,date)] -> dict[tag]=date
+    grouped = group_prs_by_next_tag(missing_prs, tags)
 
     # ------------------------------------------------------------------
     # Produce output
     # ------------------------------------------------------------------
-    out_lines: List[str] = []
+    out_lines: list[str] = []
     if args.verbose:
-        # Gather titles first (one request per missing PR)
-        titles = {}
-        for num in missing:
-            try:
-                titles[num] = get_pr_title(owner, repo, num, token=args.token)
-            except Exception as exc:          # fallback if API fails for a PR
-                titles[num] = f"PR #{num}"
-                print(f"Warning: could not fetch title for PR #{num}: {exc}",
-                      file=sys.stderr)
+        # Verbose mode prints a ready‑to‑paste reST block.
+        for tag, pr_nums in grouped.items():
+            # Tag header; use Pacific Time not UTC
+            if tag != 'NO_TAG':
+                tagdatetime_pacific = tag_datetimes[tag].astimezone(ZoneInfo("America/Los_Angeles"))
+                tagdate = tagdatetime_pacific.strftime('%Y-%m-%d')  # YEAR-MM-DD
+            else:
+                tagdate = 'unreleased'
 
-        # Bullet list
-        for num in missing:
-            title = titles.get(num, f"PR #{num}")
-            out_lines.append(f"* {title} (PR `#{num}`_).\n")
-        out_lines.append("\n")  # separate bullets from reference block
+            line = f"{tag} ({tagdate})"
+            out_lines.append(f"\n{line}\n")
+            out_lines.append("-"*len(line) + "\n")
 
-        # Reference block
-        for num in missing:
-            out_lines.append(f".. _`#{num}`: https://github.com/{owner}/{repo}/pull/{num}\n")
+            # Descriptions
+            out_lines.append("\n")
+            for num in sorted(pr_nums):
+                title = get_pr_title(owner, repo, num, token=args.token)
+                out_lines.append(f"* {title} (PR `#{num}`_).\n")
+
+            # PR link footnotes
+            out_lines.append("\n")
+            for num in sorted(pr_nums):
+                out_lines.append(f".. _`#{num}`: https://github.com/{owner}/{repo}/pull/{num}\n")
+
+            out_lines.append("\n")   # blank line before reference block
+
     else:
-        # Plain list of numbers
-        out_lines = [f"{num}\n" for num in missing]
+        # Plain list – grouped but still one PR per line, prefixed by tag
+        for tag, pr_nums in grouped.items():
+            for num in sorted(pr_nums):
+                out_lines.append(f"{tag}\t{num}\n")   # tab‑separated “tag   PR”
 
     # Write / print
     if args.output:
@@ -213,6 +305,11 @@ def main() -> None:
         print(f"Wrote output to {args.output}", file=sys.stderr)
     else:
         sys.stdout.writelines(out_lines)
+
+    # debug with IPython
+    if args.debug:
+        import IPython
+        IPython.embed()
 
 
 if __name__ == "__main__":
