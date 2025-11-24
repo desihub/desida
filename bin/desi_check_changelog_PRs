@@ -20,6 +20,7 @@ Usage
 * ``--after`` – only show PRs with a number > N.
 * ``--verbose`` – produce RST entries instead of a plain number list.
 * ``--output`` – write the result to a file; otherwise prints to stdout.
+* ``--debug`` – start IPython prompt at end instead of exiting
 
 Written by LBL CBorg Coder AI with prompts from Stephen Bailey
 """
@@ -211,8 +212,12 @@ def get_pr_title(owner: str,
 # ----------------------------------------------------------------------
 def main() -> None:
     p = argparse.ArgumentParser(
-        description="List closed PRs of a GitHub repo that are NOT mentioned in its doc/changes.rst."
+        description="List closed PRs of a GitHub repo that are NOT mentioned in its doc/changes.rst.",
+        epilog="""Without a token, GitHub API rate limits mean you can only query a few URLs.
+For the --token option, generate a classic token at https://github.com/settings/tokens with
+no additional scope options selected.""",
     )
+
     p.add_argument("repo_url", help="HTTPS URL of the repository, e.g. https://github.com/desihub/desispec")
     p.add_argument("--token", help="GitHub personal access token (optional).")
     p.add_argument("--after", type=int, default=None,
