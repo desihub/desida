@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""
+Compare closed pull‑requests of a GitHub repo with the PR numbers that appear
+in its ``doc/changes.rst`` file.
+
+Features added
+--------------
+* ``--after N`` – only list PRs whose number is greater than *N*.
+* ``--verbose`` – emit reStructuredText blocks ready to be pasted into
+  ``changes.rst``.  Each block contains a bullet with the PR title and the
+  reference link.
+
+Usage
+-----
+    python compare_closed_prs.py REPO_URL [--token TOKEN] [--after N]
+                                            [--verbose] [--output FILE]
+
+* ``REPO_URL`` – e.g. ``https://github.com/desihub/desispec``.
+* ``--token`` – optional personal‑access token (avoids rate‑limit).
+* ``--after`` – only show PRs with a number > N.
+* ``--verbose`` – produce RST entries instead of a plain number list.
+* ``--output`` – write the result to a file; otherwise prints to stdout.
+
+Written by LBL CBorg Coder AI with prompts from Stephen Bailey
+"""
+
+import argparse
+import re
+import sys
+import urllib.parse
+from pathlib import Path
+from typing import Set, List
+
+import requests
+
+# ----------------------------------------------------------------------
+# Constants / helpers
+# ----------------------------------------------------------------------
+GITHUB_API = "https://api.github.com"
+RAW_CONTENT = "https://raw.githubusercontent.com"
+PER_PAGE = 100  # max permitted by GitHub
+
+
+def _github_get(url: str,
+                token: str | None = None,
+                params: dict | None = None) -> requests.Response:
+    """GET request with optional auth and basic error handling."""
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"token {token}"
+    resp = requests.get(url, headers=headers, params=params, timeout=30)
+    if resp.status_code == 403 and resp.headers.get("X-RateLimit-Remaining") == "0":
+        raise RuntimeError("GitHub rate limit exceeded – supply a personal access token.")
+    resp.raise_for_status()
+    return resp
+
+
+def parse_repo_url(url: str) -> tuple[str, str]:
+    """Extract (owner, repo) from ``https://github.com/owner/repo``."""
+    p = urllib.parse.urlparse(url)
+    if p.scheme not in ("http", "https"):
+        raise ValueError("Repository URL must start with http:// or https://")
+    parts = p.path.strip("/").split("/")
+    if len(parts) < 2:
+        raise ValueError("URL must contain owner and repo, e.g. https://github.com/owner/repo")
+    owner, repo = parts[0], parts[1].removesuffix(".git")
+    return owner, repo
+
+
+def get_closed_pr_numbers(owner: str,
+                          repo: str,
+                          token: str | None = None) -> Set[int]:
+    """Return all **merged** PR numbers for the repository (i.e. closed by merging)."""
+    prs: Set[int] = set()
+    page = 1
+    while True:
+        url = f"{GITHUB_API}/repos/{owner}/{repo}/pulls"
+        params = {"state": "closed", "per_page": PER_PAGE, "page": page}
+        data = _github_get(url, token=token, params=params).json()
+        if not data:
+            break
+
+        # Keep only PRs that were merged (GitHub marks them with "merged": true
+        # or a non‑null "merged_at" timestamp).
+        for pr in data:
+            if pr.get("merged") or pr.get("merged_at"):
+                prs.add(pr["number"])
+
+        page += 1
+    return prs
+
+
+def fetch_changes_rst(owner: str, repo: str, token: str | None = None) -> str:
+    """Download ``doc/changes.rst`` from the ``main`` branch (raw content)."""
+    raw_url = f"{RAW_CONTENT}/{owner}/{repo}/main/doc/changes.rst"
+    return _github_get(raw_url, token=token).text
+
+
+# ----------------------------------------------------------------------
+# Parsing ``changes.rst``
+# ----------------------------------------------------------------------
+_LINE_RE = re.compile(
+    r"""^\s*\.\.\s+_`#(?P<num>\d+)`:\s+https?://github\.com/"""
+    r"""(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P=num)\s*$"""
+)
+
+_LINE_RE = re.compile(
+    r"""^\s*\.\.\s+_`[^`]+`:\s+https?://github\.com/"""
+    r"""(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<num>\d+)\s*$"""
+)
+
+
+
+def parse_pr_numbers_from_changes(content: str,
+                                  expected_owner: str,
+                                  expected_repo: str) -> Set[int]:
+    """Extract PR numbers that exactly match the documented link format."""
+    found: Set[int] = set()
+    for line in content.splitlines():
+        m = _LINE_RE.match(line.rstrip())
+        if m and m.group("owner") == expected_owner and m.group("repo") == expected_repo:
+            found.add(int(m.group("num")))
+    return found
+
+
+def get_pr_title(owner: str,
+                 repo: str,
+                 pr_number: int,
+                 token: str | None = None) -> str:
+    """Retrieve the PR title (used as a brief description)."""
+    url = f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{pr_number}"
+    data = _github_get(url, token=token).json()
+    return data.get("title", f"PR #{pr_number}")
+
+
+# ----------------------------------------------------------------------
+# Main driver
+# ----------------------------------------------------------------------
+def main() -> None:
+    p = argparse.ArgumentParser(
+        description="List closed PRs of a GitHub repo that are NOT mentioned in its doc/changes.rst."
+    )
+    p.add_argument("repo_url", help="HTTPS URL of the repository, e.g. https://github.com/desihub/desispec")
+    p.add_argument("--token", help="GitHub personal access token (optional).")
+    p.add_argument("--after", type=int, default=None,
+                   help="Only show PRs with number greater than this value.")
+    p.add_argument("--verbose", action="store_true",
+                   help="Output reStructuredText entries ready for changes.rst.")
+    p.add_argument("-o", "--output", type=Path, default=None,
+                   help="Write result to this file; otherwise print to stdout.")
+    args = p.parse_args()
+
+    # ------------------------------------------------------------------
+    # Resolve owner/repo
+    # ------------------------------------------------------------------
+    try:
+        owner, repo = parse_repo_url(args.repo_url)
+    except ValueError as e:
+        p.error(str(e))
+
+    # ------------------------------------------------------------------
+    # Parse changes.rst
+    # ------------------------------------------------------------------
+    changes_text = fetch_changes_rst(owner, repo, token=args.token)
+    file_prs = parse_pr_numbers_from_changes(changes_text, owner, repo)
+    print(f"Found {len(file_prs)} PR references in doc/changes.rst", file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Get all closed PR numbers from GitHub
+    # ------------------------------------------------------------------
+    closed_prs = get_closed_pr_numbers(owner, repo, token=args.token)
+    print(f"Retrieved {len(closed_prs)} closed PRs from GitHub", file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Compute missing PRs and apply optional ``--after`` filter
+    # ------------------------------------------------------------------
+    missing = sorted(closed_prs - file_prs)
+    if args.after is not None:
+        missing = [n for n in missing if n > args.after]
+    print(f"{len(missing)} closed PRs are NOT mentioned in changes.rst after filtering.", file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Produce output
+    # ------------------------------------------------------------------
+    out_lines: List[str] = []
+    if args.verbose:
+        # Gather titles first (one request per missing PR)
+        titles = {}
+        for num in missing:
+            try:
+                titles[num] = get_pr_title(owner, repo, num, token=args.token)
+            except Exception as exc:          # fallback if API fails for a PR
+                titles[num] = f"PR #{num}"
+                print(f"Warning: could not fetch title for PR #{num}: {exc}",
+                      file=sys.stderr)
+
+        # Bullet list
+        for num in missing:
+            title = titles.get(num, f"PR #{num}")
+            out_lines.append(f"* {title} (PR `#{num}`_).\n")
+        out_lines.append("\n")  # separate bullets from reference block
+
+        # Reference block
+        for num in missing:
+            out_lines.append(f".. _`#{num}`: https://github.com/{owner}/{repo}/pull/{num}\n")
+    else:
+        # Plain list of numbers
+        out_lines = [f"{num}\n" for num in missing]
+
+    # Write / print
+    if args.output:
+        args.output.write_text("".join(out_lines), encoding="utf-8")
+        print(f"Wrote output to {args.output}", file=sys.stderr)
+    else:
+        sys.stdout.writelines(out_lines)
+
+
+if __name__ == "__main__":
+    main()
