@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
-import sys
-from desida.github import main
-sys.exit(main())
+if __name__ == "__main__":
+    import sys
+    from desida.scripts.github_tags import main
+    sys.exit(main())

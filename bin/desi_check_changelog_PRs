@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+"""
+Compare closed pull-requests of a GitHub repo with the PR numbers that appear
+in its ``doc/changes.rst`` file.
+
+Features added
+--------------
+* ``--after N`` - only list PRs whose number is greater than *N*.
+* ``--verbose`` - emit reStructuredText blocks ready to be pasted into
+    ``changes.rst``.  Each block contains a bullet with the PR title and the
+    reference link.
+
+Usage
+-----
+        python compare_closed_prs.py REPO_URL [--token TOKEN] [--after N]
+                                              [--verbose] [--output FILE]
+
+* ``REPO_URL`` - e.g. ``desispec`` or ``https://github.com/desihub/desispec``.
+* ``--token`` - optional personal-access token (avoids rate-limit).
+* ``--after`` - only show PRs with a number > N.
+* ``--verbose`` - produce RST entries instead of a plain number list.
+* ``--output`` - write the result to a file; otherwise prints to stdout.
+* ``--debug`` - start IPython prompt at end instead of exiting
+
+Written by LBL CBorg Coder AI with prompts from Stephen Bailey
+"""
+
+import argparse
+import re
+import sys
+from pathlib import Path
+from typing import Set
+from zoneinfo import ZoneInfo  # Requires Python 3.9+
+
+from desida.github import parse_repo_url, github_get, get_merged_prs, get_tags_with_dates, get_pr_title
+
+# ----------------------------------------------------------------------
+# Constants / helpers
+# ----------------------------------------------------------------------
+GITHUB_API = "https://api.github.com"
+RAW_CONTENT = "https://raw.githubusercontent.com"
+PER_PAGE = 100  # max permitted by GitHub
+
+
+def fetch_changes_rst(owner, repo, token=None):
+    """Download doc/changes.rst from the repo main branch.
+
+    Args:
+        owner (str): GitHub org or user name, e.g. "desihub".
+        repo (str): GitHub repository name, e.g. "desispec".
+        token (str or None): Optional GitHub token.
+
+    Returns:
+        str: The contents of doc/changes.rst.
+
+    Raises:
+        requests.HTTPError: If the GitHub request fails.
+        RuntimeError: If rate limiting or retries fail in GitHub helper.
+    """
+    raw_url = f"{RAW_CONTENT}/{owner}/{repo}/main/doc/changes.rst"
+    return github_get(raw_url, token=token).text
+
+
+def group_prs_by_next_tag(prs, tags):
+    """Group PR numbers by the next tag after their merge date.
+
+    Args:
+        prs (dict[int, datetime]): Mapping of PR number to merge datetime.
+        tags (list[tuple[str, datetime]]): Tag name and datetime tuples in order.
+
+    Returns:
+        dict[str, list[int]]: Mapping of tag name to PR numbers. PRs with no
+            later tag are grouped under the "NO_TAG" key.
+    """
+    grouped: dict[str, list[int]] = {}
+    for pr_num, merged_dt in prs.items():
+        tag_name = "NO_TAG"
+        for name, tag_dt in tags:
+            if tag_dt > merged_dt:
+                tag_name = name
+                break
+        grouped.setdefault(tag_name, []).append(pr_num)
+    return grouped
+
+
+# ----------------------------------------------------------------------
+# Parsing ``changes.rst`` for tag numbers; supports either
+# .. _`PR #864`: https://github.com/desihub/desitarget/pull/864
+# .. _`#225`: https://github.com/desihub/desiutil/pull/225
+# ----------------------------------------------------------------------
+
+_LINE_RE = re.compile(
+    r"""^\s*\.\.\s+_`[^`]+`:\s+https?://github\.com/"""
+    r"""(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<num>\d+)\s*$"""
+)
+
+
+def parse_pr_numbers_from_changes(content, expected_owner, expected_repo):
+    """Extract PR numbers from GitHub links in changes text.
+
+    Args:
+        content (str): Full text of doc/changes.rst.
+        expected_owner (str): Expected GitHub org or user, e.g. "desihub".
+        expected_repo (str): Expected repo name, e.g. "desispec".
+
+    Returns:
+        set[int]: PR numbers referenced in the file.
+    """
+    found: Set[int] = set()
+    for line in content.splitlines():
+        m = _LINE_RE.match(line.rstrip())
+        if m and m.group("owner") == expected_owner and m.group("repo") == expected_repo:
+            found.add(int(m.group("num")))
+    return found
+
+
+# ----------------------------------------------------------------------
+# Main script wrapper
+# ----------------------------------------------------------------------
+def main():
+    p = argparse.ArgumentParser(
+        description="List closed PRs of a GitHub repo that are NOT mentioned in its doc/changes.rst.",
+        epilog="""Without a token, GitHub API rate limits mean you can only query a few URLs.
+For the --token option, generate a classic token at https://github.com/settings/tokens with
+no additional scope options selected.""",
+    )
+
+    p.add_argument("repo_url",
+                   help="Repo name (e.g. desispec) or full URL (e.g. https://github.com/desihub/desispec)")
+    p.add_argument("--token", help="GitHub personal access token (optional).")
+    p.add_argument("--after", type=int, default=None,
+                   help="Only show PRs with number greater than this value.")
+    p.add_argument("--verbose", action="store_true",
+                   help="Output reStructuredText entries ready for changes.rst.")
+    p.add_argument("-o", "--output", type=Path, default=None,
+                   help="Write result to this file; otherwise print to stdout.")
+    p.add_argument("--debug", action="store_true",
+                   help="Start IPython prompt at end instead of exiting.")
+    args = p.parse_args()
+
+    # ------------------------------------------------------------------
+    # Resolve owner/repo
+    # ------------------------------------------------------------------
+    try:
+        owner, repo = parse_repo_url(args.repo_url)
+    except ValueError as e:
+        p.error(str(e))
+
+    # ------------------------------------------------------------------
+    # Parse changes.rst
+    # ------------------------------------------------------------------
+    changes_text = fetch_changes_rst(owner, repo, token=args.token)
+    file_prs = parse_pr_numbers_from_changes(changes_text, owner, repo)
+    print(f"Found {len(file_prs)} PR references in doc/changes.rst", file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Get all merged PR numbers from GitHub
+    # ------------------------------------------------------------------
+    merged_prs = get_merged_prs(owner, repo, token=args.token)      # {num: datetime}
+    print(f"Retrieved {len(merged_prs)} merged PRs from GitHub", file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Compute missing PRs and apply optional ``--after`` filter
+    # ------------------------------------------------------------------
+    missing_prs = {num: dt for num, dt in merged_prs.items() if num not in file_prs}
+    if args.after is not None:
+        missing_prs = {num: dt for num, dt in missing_prs.items() if num > args.after}
+    print(f"{len(missing_prs)} merged PRs are NOT mentioned in changes.rst after filtering.",
+          file=sys.stderr)
+
+    # ------------------------------------------------------------------
+    # Load tags (chronological) and group PRs by first tag after merge
+    # ------------------------------------------------------------------
+    tags = get_tags_with_dates(owner, repo, token=args.token)
+    tag_datetimes = dict(tags)  # list[(tag,date)] -> dict[tag]=date
+    grouped = group_prs_by_next_tag(missing_prs, tags)
+
+    # ------------------------------------------------------------------
+    # Produce output
+    # ------------------------------------------------------------------
+    out_lines: list[str] = []
+    if args.verbose:
+        # Verbose mode prints a ready-to-paste reST block.
+        for tag, pr_nums in grouped.items():
+            # Tag header; use Pacific Time not UTC
+            if tag != 'NO_TAG':
+                tagdatetime_pacific = tag_datetimes[tag].astimezone(ZoneInfo("America/Los_Angeles"))
+                tagdate = tagdatetime_pacific.strftime('%Y-%m-%d')  # YEAR-MM-DD
+            else:
+                tagdate = 'unreleased'
+
+            line = f"{tag} ({tagdate})"
+            out_lines.append(f"\n{line}\n")
+            out_lines.append("-"*len(line) + "\n")
+
+            # Descriptions
+            out_lines.append("\n")
+            for num in sorted(pr_nums):
+                title = get_pr_title(owner, repo, num, token=args.token)
+                out_lines.append(f"* {title} (PR `#{num}`_).\n")
+
+            # PR link footnotes
+            out_lines.append("\n")
+            for num in sorted(pr_nums):
+                out_lines.append(f".. _`#{num}`: https://github.com/{owner}/{repo}/pull/{num}\n")
+
+            out_lines.append("\n")   # blank line before reference block
+
+    else:
+        # Plain list - grouped but still one PR per line, prefixed by tag
+        for tag, pr_nums in grouped.items():
+            for num in sorted(pr_nums):
+                out_lines.append(f"{tag}\t{num}\n")   # tab-separated "tag   PR"
+
+    # Write / print
+    if args.output:
+        args.output.write_text("".join(out_lines), encoding="utf-8")
+        print(f"Wrote output to {args.output}", file=sys.stderr)
+    else:
+        sys.stdout.writelines(out_lines)
+
+    # debug with IPython
+    if args.debug:
+        import IPython
+        IPython.embed()
+
+
+if __name__ == "__main__":
+    main()
