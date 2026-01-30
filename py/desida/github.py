@@ -18,13 +18,17 @@ GITHUB_API = "https://api.github.com"
 PER_PAGE = 100
 
 
-def parse_repo_url(url: str) -> tuple[str, str]:
+def parse_repo_url(url):
     """Extract (owner, repo) from a GitHub URL or repo name.
 
-    Accepts URLs like "https://github.com/owner/repo", "owner/repo",
-    or just "repo" (default to owner=desihub) and returns
-    (owner, repo) where ``repo`` has any trailing ``.git`` removed.
+    Args:
+        url (str): GitHub URL, "owner/repo", or "repo".
 
+    Returns:
+        tuple[str, str]: (owner, repo) with any trailing ".git" removed.
+
+    Raises:
+        ValueError: If the URL or repo name cannot be parsed.
     """
     if ("/" not in url) and (not url.startswith("http")):
         return "desihub", url.removesuffix(".git")
@@ -44,14 +48,21 @@ def parse_repo_url(url: str) -> tuple[str, str]:
     return owner, repo
 
 
-def github_get(url: str, token: str | None = None, params: dict | None = None, timeout: int = 30) -> requests.Response:
+def github_get(url, token=None, params=None, timeout=30):
     """Perform a GET with optional token, retry/backoff, and rate-limit handling.
 
-    Behaviour:
-    - Retries up to 3 times for transient 5xx responses and secondary rate-limit replies
-      that include a ``Retry-After`` header.
-    - For a primary rate-limit (X-RateLimit-Remaining == "0") raises a RuntimeError
-      describing the reset time.
+    Args:
+        url (str): Full API URL.
+        token (str or None): Optional GitHub token.
+        params (dict or None): Query parameters.
+        timeout (int): Request timeout in seconds.
+
+    Returns:
+        requests.Response: Successful response.
+
+    Raises:
+        RuntimeError: If rate limited or retries fail.
+        requests.HTTPError: For non-retryable HTTP errors.
     """
     headers = {"Accept": "application/vnd.github+json"}
     if token:
@@ -88,10 +99,17 @@ def github_get(url: str, token: str | None = None, params: dict | None = None, t
     raise RuntimeError(f"Failed to GET {url} after retries.")
 
 
-def _get_tag_commit_date(owner: str, repo: str, tag_sha: str, token: str | None = None) -> datetime:
-    """Return the datetime of the commit that a tag object/sha points to.
+def _get_tag_commit_date(owner, repo, tag_sha, token=None):
+    """Return the datetime of the commit that a tag object or sha points to.
 
-    Works for annotated tags (tag objects) and lightweight tags (commit sha).
+    Args:
+        owner (str): GitHub org or user name.
+        repo (str): GitHub repository name.
+        tag_sha (str): Tag object sha or commit sha.
+        token (str or None): Optional GitHub token.
+
+    Returns:
+        datetime: Commit datetime in UTC.
     """
     tag_url = f"{GITHUB_API}/repos/{owner}/{repo}/git/tags/{tag_sha}"
     try:
@@ -109,10 +127,16 @@ def _get_tag_commit_date(owner: str, repo: str, tag_sha: str, token: str | None 
     return datetime.fromisoformat(date_str.rstrip("Z")).replace(tzinfo=timezone.utc)
 
 
-def get_tags_with_dates(owner: str, repo: str, token: str | None = None) -> list[tuple[str, datetime]]:
-    """Return list of (tag_name, tag_date) sorted chronologically (oldest->newest).
+def get_tags_with_dates(owner, repo, token=None):
+    """Return list of tags with dates sorted chronologically.
 
-    Pages through the tags API and resolves the commit date for each tag.
+    Args:
+        owner (str): GitHub org or user name.
+        repo (str): GitHub repository name.
+        token (str or None): Optional GitHub token.
+
+    Returns:
+        list[tuple[str, datetime]]: (tag_name, tag_date) sorted oldest to newest.
     """
     tags: list[tuple[str, datetime]] = []
     page = 1
@@ -133,10 +157,16 @@ def get_tags_with_dates(owner: str, repo: str, token: str | None = None) -> list
     return tags
 
 
-def get_merged_prs(owner: str, repo: str, token: str | None = None) -> Dict[int, datetime]:
-    """Return mapping {pr_number: merged_at_datetime} for merged PRs.
+def get_merged_prs(owner, repo, token=None):
+    """Return mapping of merged PR number to merge datetime.
 
-    Pages the pulls API and collects `merged_at` timestamps.
+    Args:
+        owner (str): GitHub org or user name, e.g. "desihub".
+        repo (str): GitHub repository name, e.g. "desispec".
+        token (str or None): Optional GitHub token.
+
+    Returns:
+        Dict[int, datetime]: {pr_number: merged_at_datetime}.
     """
     prs: Dict[int, datetime] = {}
     page = 1
@@ -155,10 +185,17 @@ def get_merged_prs(owner: str, repo: str, token: str | None = None) -> Dict[int,
     return prs
 
 
-def count_merged_prs_since(owner: str, repo: str, since_iso: str | None, token: str | None = None) -> int:
-    """Count merged PRs after `since_iso` using the Search API (returns total_count).
+def count_merged_prs_since(owner, repo, since_iso, token=None):
+    """Count merged PRs after since_iso using the Search API.
 
-    If `since_iso` is None, counts all merged PRs.
+    Args:
+        owner (str): GitHub org or user name, e.g. "desihub".
+        repo (str): GitHub repository name, e.g. "desispec".
+        since_iso (str or None): ISO timestamp to filter merges after.
+        token (str or None): Optional GitHub token.
+
+    Returns:
+        int: Total number of merged PRs.
     """
     q = f"repo:{owner}/{repo} is:pr is:merged"
     if since_iso:
@@ -170,8 +207,18 @@ def count_merged_prs_since(owner: str, repo: str, since_iso: str | None, token: 
     return int(data.get("total_count", 0))
 
 
-def get_pr_title(owner: str, repo: str, pr_number: int, token: str | None = None) -> str:
-    """Return the title of a pull request by number."""
+def get_pr_title(owner, repo, pr_number, token=None):
+    """Return the title of a pull request by number.
+
+    Args:
+        owner (str): GitHub org or user name, e.g. "desihub".
+        repo (str): GitHub repository name, e.g. "desispec".
+        pr_number (int): Pull request number.
+        token (str or None): Optional GitHub token.
+
+    Returns:
+        str: Pull request title.
+    """
     url = f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{pr_number}"
     data = github_get(url, token=token).json()
     return data.get("title", f"PR #{pr_number}")

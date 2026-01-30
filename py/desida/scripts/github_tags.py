@@ -55,17 +55,19 @@ default_repo_urls = [
 ]
 
 
-# Note: HTTP/auth logic centralized in `py/desida/github_helpers.py`.
-
-
-def read_repo_urls(filename: str) -> list[str]:
-    """Read non-empty, non-comment lines from input filename
+def read_repo_urls(filename):
+    """Return list of urls loaded from filename.
 
     Args:
-        filename (str): full path to input file
+        filename (str): Full path to the input file.
 
-    Returns list of urls
+    Returns:
+        list[str]: Repository URLs, one per non-empty, non-comment line.
 
+    Raises:
+        OSError: If the file cannot be opened or read.
+
+    Empty lines and lines starting with '#' are ignored.
     """
     urls = []
     with open(filename, "r", encoding="utf-8") as f:
@@ -76,22 +78,16 @@ def read_repo_urls(filename: str) -> list[str]:
     return urls
 
 
-def extract_owner_repo(url: str) -> tuple[str, str]:
-    """
-    Given a GitHub URL, return (owner, repo_name).
+def get_latest_tag_and_date(owner, repo, token=None):
+    """Return (tag, date) for the latest tag or (None, None).
 
-    Example:
-        https://github.com/desihub/desispec  -> ("desihub", "desispec")
-    """
-    # Delegate parsing to shared helper which handles common URL formats.
-    return parse_repo_url(url)
+    Args:
+        owner (str): GitHub org or user name.
+        repo (str): GitHub repository name.
+        token (str or None): Optional GitHub token.
 
-
-def get_latest_tag_and_date(owner: str, repo: str, token: str | None = None) -> tuple[str | None, str | None]:
-    """Return (tag, date) for the latest tag (or None, None).
-
-    Uses `get_tags_with_dates` from the shared helpers and returns the latest
-    tag name and its date as a YEAR-MM-DD string.
+    Returns:
+        tuple[str or None, str or None]: Latest tag name and date (YYYY-MM-DD).
     """
     tags = get_tags_with_dates(owner, repo, token=token)
     if not tags:
@@ -100,13 +96,18 @@ def get_latest_tag_and_date(owner: str, repo: str, token: str | None = None) -> 
     return name, dt.strftime("%Y-%m-%d")
 
 
-def process_repo(url: str, token: str | None) -> dict:
-    """
-    Query GitHub for repo url and return a dict with keys:
-        repo_name, tag, tag_date, merged_prs (since tag)
+def process_repo(url, token):
+    """Query GitHub for repo URL and return a summary dict.
+
+    Args:
+        url (str): GitHub repository URL.
+        token (str or None): Optional GitHub token.
+
+    Returns:
+        dict: Keys are repo_name, tag, tag_date, merged_prs, error.
     """
     try:
-        owner, repo = extract_owner_repo(url)
+        owner, repo = parse_repo_url(url)
     except ValueError as e:
         print(f"[WARN] Skipping invalid URL: {url} ({e})", file=sys.stderr)
         return {
@@ -131,14 +132,29 @@ def process_repo(url: str, token: str | None) -> dict:
     }
 
 
-def output_csv(rows: list[dict], out_fh):
+def output_csv(rows, out_fh):
+    """Write CSV output for repository rows.
+
+    Args:
+        rows (list[dict]): Repository summary rows.
+        out_fh (io.TextIOBase): Output file handle.
+    """
     writer = csv.writer(out_fh)
     writer.writerow(["Repository", "LatestTag", "TagDate", "PRsSinceTag"])
     for r in rows:
         writer.writerow([r["repo_name"], r["tag"], r["tag_date"], r["merged_prs"]])
 
 
-def output_markdown(rows: list[dict], out_fh):
+def output_markdown(rows, out_fh):
+    """Write Markdown table output for repository rows.
+
+    Args:
+        rows (list[dict]): Repository summary rows.
+        out_fh (io.TextIOBase): Output file handle.
+
+    Raises:
+        RuntimeError: If tabulate is not installed.
+    """
     if tabulate is None:
         raise RuntimeError("tabulate package not installed - install it to use Markdown output.")
     table = [
@@ -153,16 +169,18 @@ def output_markdown(rows: list[dict], out_fh):
     out_fh.write(md + "\n")
 
 
-def get_repo_tags(repo_urls: list[str], github_token=None):
-    """Query GitHub for info about tags per repo
+def get_repo_tags(repo_urls, github_token=None):
+    """Query GitHub for tag info per repo.
 
     Args:
-        repo_urls (list of str): list of GitHub repository URLs
+        repo_urls (list[str]): GitHub repository URLs.
+        github_token (str or None): GitHub access token (minimal scope ok).
 
-    Options:
-        github_token (str): GitHub access token (minimal scope ok)
+    Returns:
+        list[dict]: dicts with keys repo_name, tag, tag_date, merged_prs, error.
 
-    Return list of dict(repo_name, tag, tag_date, merged_prs, error)
+    Raises:
+        SystemExit: If no repository URLs are provided.
     """
     token = github_token or os.getenv("GITHUB_TOKEN")
     if token:
@@ -204,6 +222,14 @@ def get_repo_tags(repo_urls: list[str], github_token=None):
 
 
 def parse_args(opts=None):
+    """Parse command-line options.
+
+    Args:
+        opts (list[str] or None): Optional argv list for testing.
+
+    Returns:
+        argparse.Namespace: Parsed arguments.
+    """
     parser = argparse.ArgumentParser(
         description="Summarize GitHub repo tags",
         epilog="""Without a token, GitHub API rate limits mean you can only query a few URLs.
@@ -237,7 +263,12 @@ Generate a classic token at https://github.com/settings/tokens with no additiona
     )
     return parser.parse_args(opts)
 
-def main(opts=None): 
+def main(opts=None):
+    """Run the GitHub tags summary CLI.
+
+    Args:
+        opts (list[str] or None): Optional argv list for testing.
+    """
     # opts allows main to be called with a list of command line options instead
     # of using sys.argv; this is mainly for testing.
     args = parse_args(opts)
