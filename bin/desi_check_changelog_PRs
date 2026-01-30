@@ -46,7 +46,7 @@ PER_PAGE = 100  # max permitted by GitHub
 
 
 def fetch_changes_rst(owner: str, repo: str, token: str | None = None) -> str:
-    """Download ``doc/changes.rst`` from the ``main`` branch (raw content)."""
+    """Download doc/changes.rst from the main branch of https://github.com/owner/repo."""
     raw_url = f"{RAW_CONTENT}/{owner}/{repo}/main/doc/changes.rst"
     return github_get(raw_url, token=token).text
 
@@ -84,7 +84,7 @@ _LINE_RE = re.compile(
 def parse_pr_numbers_from_changes(content: str,
                                   expected_owner: str,
                                   expected_repo: str) -> Set[int]:
-    """Extract PR numbers that exactly match the documented link format."""
+    """Extract PR numbers from github links found in the content string"""
     found: Set[int] = set()
     for line in content.splitlines():
         m = _LINE_RE.match(line.rstrip())
@@ -94,7 +94,7 @@ def parse_pr_numbers_from_changes(content: str,
 
 
 # ----------------------------------------------------------------------
-# Main driver
+# Main script wrapper
 # ----------------------------------------------------------------------
 def main() -> None:
     p = argparse.ArgumentParser(

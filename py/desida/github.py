@@ -171,6 +171,7 @@ def count_merged_prs_since(owner: str, repo: str, since_iso: str | None, token: 
 
 
 def get_pr_title(owner: str, repo: str, pr_number: int, token: str | None = None) -> str:
+    """Return the title of a pull request by number."""
     url = f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{pr_number}"
     data = github_get(url, token=token).json()
     return data.get("title", f"PR #{pr_number}")
