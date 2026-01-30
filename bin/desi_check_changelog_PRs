@@ -28,13 +28,10 @@ Written by LBL CBorg Coder AI with prompts from Stephen Bailey
 import argparse
 import re
 import sys
-import urllib.parse
 from pathlib import Path
-from typing import Set, List
-from datetime import datetime, timezone
+from typing import Set
 from zoneinfo import ZoneInfo  # Requires Python 3.9+
 
-import requests
 from desida.github import parse_repo_url, github_get, get_merged_prs, get_tags_with_dates, get_pr_title
 
 # ----------------------------------------------------------------------

@@ -25,7 +25,6 @@ except ImportError:
 
 from desida.github import (
     parse_repo_url,
-    github_get,
     get_tags_with_dates,
     count_merged_prs_since,
 )
