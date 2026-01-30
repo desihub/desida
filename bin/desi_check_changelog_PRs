@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
 """
-Compare closed pull‑requests of a GitHub repo with the PR numbers that appear
+Compare closed pull-requests of a GitHub repo with the PR numbers that appear
 in its ``doc/changes.rst`` file.
 
 Features added
 --------------
-* ``--after N`` – only list PRs whose number is greater than *N*.
-* ``--verbose`` – emit reStructuredText blocks ready to be pasted into
-  ``changes.rst``.  Each block contains a bullet with the PR title and the
-  reference link.
+* ``--after N`` - only list PRs whose number is greater than *N*.
+* ``--verbose`` - emit reStructuredText blocks ready to be pasted into
+    ``changes.rst``.  Each block contains a bullet with the PR title and the
+    reference link.
 
 Usage
 -----
-    python compare_closed_prs.py REPO_URL [--token TOKEN] [--after N]
-                                            [--verbose] [--output FILE]
+        python compare_closed_prs.py REPO_URL [--token TOKEN] [--after N]
+                                              [--verbose] [--output FILE]
 
-* ``REPO_URL`` – e.g. ``https://github.com/desihub/desispec``.
-* ``--token`` – optional personal‑access token (avoids rate‑limit).
-* ``--after`` – only show PRs with a number > N.
-* ``--verbose`` – produce RST entries instead of a plain number list.
-* ``--output`` – write the result to a file; otherwise prints to stdout.
-* ``--debug`` – start IPython prompt at end instead of exiting
+* ``REPO_URL`` - e.g. ``https://github.com/desihub/desispec``.
+* ``--token`` - optional personal-access token (avoids rate-limit).
+* ``--after`` - only show PRs with a number > N.
+* ``--verbose`` - produce RST entries instead of a plain number list.
+* ``--output`` - write the result to a file; otherwise prints to stdout.
+* ``--debug`` - start IPython prompt at end instead of exiting
 
 Written by LBL CBorg Coder AI with prompts from Stephen Bailey
 """
@@ -75,7 +75,7 @@ def get_merged_prs(owner: str,
                    token: str | None = None) -> dict[int, datetime]:
     """
     Return a mapping {pr_number: merged_at_datetime} for every PR that was
-    merged (i.e. closed by merge).
+    merged (i.e. closed by merge).
     """
     prs: dict[int, datetime] = {}
     page = 1
@@ -87,10 +87,10 @@ def get_merged_prs(owner: str,
             break
 
         for pr in data:
-            # ``merged_at`` is null for non‑merged closed PRs.
+            # ``merged_at`` is null for non-merged closed PRs.
             merged_at = pr.get("merged_at")
             if merged_at:
-                # GitHub timestamps are ISO‑8601 UTC strings
+                # GitHub timestamps are ISO-8601 UTC strings
                 merged_dt = datetime.fromisoformat(merged_at.rstrip("Z")).replace(tzinfo=timezone.utc)
                 prs[pr["number"]] = merged_dt
         page += 1
@@ -157,7 +157,7 @@ def get_tags_with_dates(owner: str,
 def group_prs_by_next_tag(prs: dict[int, datetime],
                           tags: list[tuple[str, datetime]]) -> dict[str, list[int]]:
     """
-    For each PR, find the first tag whose date is later than the PR’s merge date.
+    For each PR, find the first tag whose date is later than the PR's merge date.
     Returns a mapping ``{tag_name: [pr_numbers...]}``.  PRs that have no later tag
     are grouped under the special key ``'NO_TAG'``.
     """
@@ -272,7 +272,7 @@ no additional scope options selected.""",
     # ------------------------------------------------------------------
     out_lines: list[str] = []
     if args.verbose:
-        # Verbose mode prints a ready‑to‑paste reST block.
+        # Verbose mode prints a ready-to-paste reST block.
         for tag, pr_nums in grouped.items():
             # Tag header; use Pacific Time not UTC
             if tag != 'NO_TAG':
@@ -299,10 +299,10 @@ no additional scope options selected.""",
             out_lines.append("\n")   # blank line before reference block
 
     else:
-        # Plain list – grouped but still one PR per line, prefixed by tag
+        # Plain list - grouped but still one PR per line, prefixed by tag
         for tag, pr_nums in grouped.items():
             for num in sorted(pr_nums):
-                out_lines.append(f"{tag}\t{num}\n")   # tab‑separated “tag   PR”
+                out_lines.append(f"{tag}\t{num}\n")   # tab-separated "tag   PR"
 
     # Write / print
     if args.output:

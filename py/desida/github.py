@@ -22,7 +22,7 @@ import re
 
 import requests
 
-# Optional import – only needed for Markdown tables
+# Optional import - only needed for Markdown tables
 try:
     from tabulate import tabulate
 except ImportError:
@@ -75,7 +75,7 @@ def get_auth_headers(token: str | None) -> dict:
 
 
 def read_repo_urls(filename: str) -> list[str]:
-    """Read non‑empty, non‑comment lines from input filename
+    """Read non-empty, non-comment lines from input filename
 
     Args:
         filename (str): full path to input file
@@ -111,7 +111,7 @@ def extract_owner_repo(url: str) -> tuple[str, str]:
 
 def request_with_retry(url: str, headers: dict, params: dict | None = None) -> requests.Response:
     """
-    Perform a GET request, handling rate‑limit (403) and transient errors.
+    Perform a GET request, handling rate-limit (403) and transient errors.
 
     If we hit the secondary rate limit (status 403 with a `Retry-After` header),
     we sleep and retry once.
@@ -128,7 +128,7 @@ def request_with_retry(url: str, headers: dict, params: dict | None = None) -> r
                 print(f"Rate limited, sleeping {wait}s...", file=sys.stderr)
                 time.sleep(wait)
                 continue
-            # Primary rate limit – show remaining and abort
+            # Primary rate limit - show remaining and abort
             remaining = resp.headers.get("X-RateLimit-Remaining")
             reset_ts = int(resp.headers.get("X-RateLimit-Reset", "0"))
             reset_in = max(reset_ts - int(time.time()), 0)
@@ -137,7 +137,7 @@ def request_with_retry(url: str, headers: dict, params: dict | None = None) -> r
                 f"Reset in {reset_in}s. Provide a token to increase limits."
             )
         if resp.status_code in (502, 503, 504):
-            # Transient server error – back off a bit
+            # Transient server error - back off a bit
             time.sleep(2 ** attempt)
             continue
         # For other errors, raise an exception with details
@@ -148,7 +148,7 @@ def request_with_retry(url: str, headers: dict, params: dict | None = None) -> r
 def get_latest_release(owner: str, repo: str, headers: dict) -> tuple[str, str] | None:
     """
     Try to fetch the latest *release* (which includes a tag). Returns (tag, date)
-    where date is ISO‑8601 string. Returns None if no release exists.
+    where date is ISO-8601 string. Returns None if no release exists.
     """
     url = f"{GITHUB_API}/repos/{owner}/{repo}/releases/latest"
     try:
@@ -304,7 +304,7 @@ def output_csv(rows: list[dict], out_fh):
 
 def output_markdown(rows: list[dict], out_fh):
     if tabulate is None:
-        raise RuntimeError("tabulate package not installed – install it to use Markdown output.")
+        raise RuntimeError("tabulate package not installed - install it to use Markdown output.")
     table = [
         [r["repo_name"], r["tag"], r["tag_date"], r["merged_prs"]]
         for r in rows
@@ -332,7 +332,7 @@ def get_repo_tags(repo_urls: list[str], github_token=None):
     if token:
         print("[INFO] Using provided GitHub token for authenticated requests.", file=sys.stderr)
     else:
-        print("[INFO] No GitHub token supplied – you are limited to 60 requests/hour.", file=sys.stderr)
+        print("[INFO] No GitHub token supplied - you are limited to 60 requests/hour.", file=sys.stderr)
 
     # Default GitHub API query header plus optional token
     headers = get_auth_headers(token)
