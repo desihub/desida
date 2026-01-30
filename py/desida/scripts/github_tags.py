@@ -212,7 +212,6 @@ def get_repo_tags(repo_urls, github_token=None):
                     "error": str(exc),
                 }
             )
-            raise exc
 
         # Small pause to be nice to the API (especially without a token)
         time.sleep(0.1)
