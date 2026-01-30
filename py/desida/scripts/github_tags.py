@@ -1,5 +1,5 @@
 """
-desida.github
+desida.scripts.github_tags
 =============
 
 Utilities to read a list of GitHub repository URLs and output a table with:
