@@ -15,7 +15,7 @@ Usage
         python compare_closed_prs.py REPO_URL [--token TOKEN] [--after N]
                                               [--verbose] [--output FILE]
 
-* ``REPO_URL`` - e.g. ``https://github.com/desihub/desispec``.
+* ``REPO_URL`` - e.g. ``desispec`` or ``https://github.com/desihub/desispec``.
 * ``--token`` - optional personal-access token (avoids rate-limit).
 * ``--after`` - only show PRs with a number > N.
 * ``--verbose`` - produce RST entries instead of a plain number list.
@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo  # Requires Python 3.9+
 
 import requests
+from desida.github import parse_repo_url, github_get, get_merged_prs, get_tags_with_dates, get_pr_title
 
 # ----------------------------------------------------------------------
 # Constants / helpers
@@ -44,114 +45,10 @@ RAW_CONTENT = "https://raw.githubusercontent.com"
 PER_PAGE = 100  # max permitted by GitHub
 
 
-def _github_get(url: str,
-                token: str | None = None,
-                params: dict | None = None) -> requests.Response:
-    """GET request with optional auth and basic error handling."""
-    headers = {"Accept": "application/vnd.github+json"}
-    if token:
-        headers["Authorization"] = f"token {token}"
-    resp = requests.get(url, headers=headers, params=params, timeout=30)
-    if resp.status_code == 403 and resp.headers.get("X-RateLimit-Remaining") == "0":
-        raise RuntimeError("GitHub rate limit exceeded – supply a personal access token.")
-    resp.raise_for_status()
-    return resp
-
-
-def parse_repo_url(url: str) -> tuple[str, str]:
-    """Extract (owner, repo) from ``https://github.com/owner/repo``."""
-    p = urllib.parse.urlparse(url)
-    if p.scheme not in ("http", "https"):
-        raise ValueError("Repository URL must start with http:// or https://")
-    parts = p.path.strip("/").split("/")
-    if len(parts) < 2:
-        raise ValueError("URL must contain owner and repo, e.g. https://github.com/owner/repo")
-    owner, repo = parts[0], parts[1].removesuffix(".git")
-    return owner, repo
-
-
-def get_merged_prs(owner: str,
-                   repo: str,
-                   token: str | None = None) -> dict[int, datetime]:
-    """
-    Return a mapping {pr_number: merged_at_datetime} for every PR that was
-    merged (i.e. closed by merge).
-    """
-    prs: dict[int, datetime] = {}
-    page = 1
-    while True:
-        url = f"{GITHUB_API}/repos/{owner}/{repo}/pulls"
-        params = {"state": "closed", "per_page": PER_PAGE, "page": page}
-        data = _github_get(url, token=token, params=params).json()
-        if not data:
-            break
-
-        for pr in data:
-            # ``merged_at`` is null for non-merged closed PRs.
-            merged_at = pr.get("merged_at")
-            if merged_at:
-                # GitHub timestamps are ISO-8601 UTC strings
-                merged_dt = datetime.fromisoformat(merged_at.rstrip("Z")).replace(tzinfo=timezone.utc)
-                prs[pr["number"]] = merged_dt
-        page += 1
-    return prs
-
-
 def fetch_changes_rst(owner: str, repo: str, token: str | None = None) -> str:
     """Download ``doc/changes.rst`` from the ``main`` branch (raw content)."""
     raw_url = f"{RAW_CONTENT}/{owner}/{repo}/main/doc/changes.rst"
-    return _github_get(raw_url, token=token).text
-
-
-def _get_tag_commit_date(owner: str, repo: str, tag_sha: str,
-                         token: str | None = None) -> datetime:
-    """
-    Return the datetime of the commit that a tag points to.
-    Works for both annotated and lightweight tags.
-    """
-    # First try to treat the SHA as an *annotated* tag object.
-    tag_url = f"{GITHUB_API}/repos/{owner}/{repo}/git/tags/{tag_sha}"
-    try:
-        tag_obj = _github_get(tag_url, token=token).json()
-        # Annotated tags have a ``tagger`` field with a ``date``.
-        date_str = tag_obj.get("tagger", {}).get("date")
-        if date_str:
-            return datetime.fromisoformat(date_str.rstrip("Z")).replace(tzinfo=timezone.utc)
-    except requests.HTTPError:
-        # If the request fails we fall back to treating it as a lightweight tag.
-        pass
-
-    # Lightweight tag – fetch the commit it points to.
-    commit_url = f"{GITHUB_API}/repos/{owner}/{repo}/commits/{tag_sha}"
-    commit_obj = _github_get(commit_url, token=token).json()
-    date_str = commit_obj["commit"]["committer"]["date"]
-    return datetime.fromisoformat(date_str.rstrip("Z")).replace(tzinfo=timezone.utc)
-
-
-def get_tags_with_dates(owner: str,
-                        repo: str,
-                        token: str | None = None) -> list[tuple[str, datetime]]:
-    """
-    Return a list ``[(tag_name, tag_date), ...]`` sorted by ``tag_date`` (oldest -> newest).
-    """
-    tags: list[tuple[str, datetime]] = []
-    page = 1
-    while True:
-        url = f"{GITHUB_API}/repos/{owner}/{repo}/tags"
-        params = {"per_page": PER_PAGE, "page": page}
-        data = _github_get(url, token=token, params=params).json()
-        if not data:
-            break
-
-        for tag in data:
-            name = tag["name"]
-            sha = tag["commit"]["sha"]
-            tag_date = _get_tag_commit_date(owner, repo, sha, token=token)
-            tags.append((name, tag_date))
-        page += 1
-
-    tags.sort(key=lambda t: t[1])          # chronological order
-    return tags
+    return github_get(raw_url, token=token).text
 
 
 def group_prs_by_next_tag(prs: dict[int, datetime],
@@ -184,7 +81,6 @@ _LINE_RE = re.compile(
 )
 
 
-
 def parse_pr_numbers_from_changes(content: str,
                                   expected_owner: str,
                                   expected_repo: str) -> Set[int]:
@@ -195,16 +91,6 @@ def parse_pr_numbers_from_changes(content: str,
         if m and m.group("owner") == expected_owner and m.group("repo") == expected_repo:
             found.add(int(m.group("num")))
     return found
-
-
-def get_pr_title(owner: str,
-                 repo: str,
-                 pr_number: int,
-                 token: str | None = None) -> str:
-    """Retrieve the PR title (used as a brief description)."""
-    url = f"{GITHUB_API}/repos/{owner}/{repo}/pulls/{pr_number}"
-    data = _github_get(url, token=token).json()
-    return data.get("title", f"PR #{pr_number}")
 
 
 # ----------------------------------------------------------------------
@@ -218,7 +104,8 @@ For the --token option, generate a classic token at https://github.com/settings/
 no additional scope options selected.""",
     )
 
-    p.add_argument("repo_url", help="HTTPS URL of the repository, e.g. https://github.com/desihub/desispec")
+    p.add_argument("repo_url",
+                   help="Repo name (e.g. desispec) or full URL (e.g. https://github.com/desihub/desispec)")
     p.add_argument("--token", help="GitHub personal access token (optional).")
     p.add_argument("--after", type=int, default=None,
                    help="Only show PRs with number greater than this value.")
