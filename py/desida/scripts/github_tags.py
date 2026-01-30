@@ -281,7 +281,7 @@ def main(opts=None):
             if repo.startswith('https://github.com'):
                 urls.append(repo)
             elif repo.startswith('github.com'):
-                urls.append('https://'+args.repo)
+                urls.append('https://' + repo)
             else:
                 urls.append('https://github.com/desihub/'+repo)
     else:
