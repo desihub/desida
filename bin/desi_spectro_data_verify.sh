@@ -25,7 +25,7 @@ function usage() {
 }
 test=false
 verbose=false
-while getopts hvV argname; do
+while getopts htvV argname; do
     case ${argname} in
         h) usage; exit 0 ;;
         t) test=true; verbose=true ;;
