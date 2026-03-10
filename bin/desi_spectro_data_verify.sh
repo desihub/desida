@@ -12,11 +12,12 @@ source ${DESIDA}/bin/desida_library.sh
 function usage() {
     local execName=$(basename $0)
     (
-    echo "${execName} [-h] [-t] [-v] [-V] NIGHTS"
+    echo "${execName} [-h] [-p] [-t] [-v] [-V] NIGHTS"
     echo ""
     echo "Verify data in DESI_SPECTRO_DATA, e.g. at Tucson."
     echo ""
     echo "         -h = Print this message and exit."
+    echo "         -p = Set public permissions on files."
     echo "         -t = Test mode.  Do not actually make any changes. Implies -v."
     echo "         -v = Verbose mode. Print extra information."
     echo "         -V = Version.  Print a version string and exit."
@@ -25,9 +26,12 @@ function usage() {
 }
 test=false
 verbose=false
-while getopts htvV argname; do
+dir_perm='2750'
+file_perm='0640'
+while getopts hptvV argname; do
     case ${argname} in
         h) usage; exit 0 ;;
+        p) dir_perm='2755'; file_perm='0644' ;;
         t) test=true; verbose=true ;;
         v) verbose=true ;;
         V) version; exit 0 ;;
@@ -83,17 +87,17 @@ for n in $(<${nights}); do
             (cd ${e}; validate ${c})
         else
             echo "ERROR: No checksum file in ${e}!"
-            ${verbose} && echo "DEBUG: /usr/bin/rsync --archive --checksum --verbose --delete --delete-after --no-motd --password-file ${HOME}/.desi ${dry_run} ${src}/${night}/ ${dst}/${night}"
+            ${verbose} && echo "DEBUG: /usr/bin/rsync --archive --checksum --verbose --delete --delete-after --no-motd --password-file ${HOME}/.desi ${dry_run} ${src}/${night}/ ${dst}/${night}/"
             /usr/bin/rsync --archive --checksum --verbose --delete --delete-after --no-motd --password-file ${HOME}/.desi ${dry_run} ${src}/${night}/ ${dst}/${night}/
         fi
     done
     #
     # Permission lock
     #
-    ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod 0644 \{\} \;"
-    ${test} || find ${dst}/${night} -type f -exec chmod 0644 \{\} \;
-    ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod 2755 \{\} \;"
-    ${test} || find ${dst}/${night} -type f -exec chmod 2755 \{\} \;
+    ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod ${file_perm} \{\} \;"
+    ${test} || find ${dst}/${night} -type f -exec chmod ${file_perm} \{\} \;
+    ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod ${dir_perm} \{\} \;"
+    ${test} || find ${dst}/${night} -type f -exec chmod ${dir_perm} \{\} \;
     ${verbose} && echo "DEBUG: chmod -R u-w ${dst}/${night}"
     ${test} || chmod -R u-w ${dst}/${night}
 done
