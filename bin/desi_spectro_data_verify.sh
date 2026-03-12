@@ -70,12 +70,8 @@ fi
 # Loop over nights.
 #
 for n in $(<${nights}); do
+    resync=false
     night=$(basename ${n})
-    #
-    # Permission unlock
-    #
-    ${verbose} && echo "DEBUG: chmod -R u+w ${dst}/${night}"
-    ${test} || chmod -R u+w ${dst}/${night}
     #
     # Loop over exposures.
     #
@@ -85,19 +81,35 @@ for n in $(<${nights}); do
         if [[ -f ${e}/${c} ]]; then
             ${verbose} && echo "DEBUG: (cd ${e}; validate ${c})"
             (cd ${e}; validate ${c})
+            if [[ $? == 0 ]]; then
+                ${verbose} && echo "DEBUG: No problems detected with ${e}."
+            else
+                echo "ERROR: Checksum problem detected for ${e}!"
+                resync=true
         else
             echo "ERROR: No checksum file in ${e}!"
-            ${verbose} && echo "DEBUG: /usr/bin/rsync --archive --checksum --verbose --delete --delete-after --no-motd --password-file ${HOME}/.desi ${dry_run} ${src}/${night}/ ${dst}/${night}/"
-            /usr/bin/rsync --archive --checksum --verbose --delete --delete-after --no-motd --password-file ${HOME}/.desi ${dry_run} ${src}/${night}/ ${dst}/${night}/
+            resync=true
         fi
     done
-    #
-    # Permission lock
-    #
-    ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod ${file_perm} \{\} \;"
-    ${test} || find ${dst}/${night} -type f -exec chmod ${file_perm} \{\} \;
-    ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod ${dir_perm} \{\} \;"
-    ${test} || find ${dst}/${night} -type f -exec chmod ${dir_perm} \{\} \;
-    ${verbose} && echo "DEBUG: chmod -R u-w ${dst}/${night}"
-    ${test} || chmod -R u-w ${dst}/${night}
+    if resync; then
+        #
+        # Permission unlock
+        #
+        ${verbose} && echo "DEBUG: chmod -R u+w ${dst}/${night}"
+        ${test} || chmod -R u+w ${dst}/${night}
+        #
+        # Sync the night.
+        #
+        ${verbose} && echo "DEBUG: /usr/bin/rsync --archive --checksum --verbose --delete --delete-after --no-motd --password-file ${HOME}/.desi ${dry_run} ${src}/${night}/ ${dst}/${night}/"
+        /usr/bin/rsync --archive --checksum --verbose --delete --delete-after --no-motd --password-file ${HOME}/.desi ${dry_run} ${src}/${night}/ ${dst}/${night}/
+        #
+        # Permission lock
+        #
+        ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod ${file_perm} \{\} \;"
+        ${test} || find ${dst}/${night} -type f -exec chmod ${file_perm} \{\} \;
+        ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod ${dir_perm} \{\} \;"
+        ${test} || find ${dst}/${night} -type f -exec chmod ${dir_perm} \{\} \;
+        ${verbose} && echo "DEBUG: chmod -R u-w ${dst}/${night}"
+        ${test} || chmod -R u-w ${dst}/${night}
+    fi
 done
