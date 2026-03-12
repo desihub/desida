@@ -86,6 +86,7 @@ for n in $(<${nights}); do
             else
                 echo "ERROR: Checksum problem detected for ${e}!"
                 resync=true
+            fi
         else
             echo "ERROR: No checksum file in ${e}!"
             resync=true
