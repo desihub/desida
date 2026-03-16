@@ -92,7 +92,7 @@ for n in $(<${nights}); do
             resync=true
         fi
     done
-    if resync; then
+    if ${resync}; then
         #
         # Permission unlock
         #
