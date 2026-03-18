@@ -271,6 +271,11 @@ def main(opts=None):
     # of using sys.argv; this is mainly for testing.
     args = parse_args(opts)
 
+    # If requesting Markdown output, ensure tabulate is available
+    if args.format == "md" and tabulate is None:
+        print("[ERROR] Markdown output requires 'tabulate' package. Please install it or use '--format csv' instead", file=sys.stderr)
+        sys.exit(1)
+
     # Read GitHub repo URLs from file, or use default list
     if args.input:
         urls = read_repo_urls(args.input)
