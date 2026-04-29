@@ -12,10 +12,11 @@ source ${DESIDA}/bin/desida_library.sh
 function usage() {
     local execName=$(basename $0)
     (
-    echo "${execName} [-h] [-p] [-t] [-v] [-V] NIGHTS"
+    echo "${execName} [-d DIR] [-h] [-p] [-t] [-v] [-V] NIGHTS"
     echo ""
     echo "Verify data in DESI_SPECTRO_DATA, e.g. at Tucson."
     echo ""
+    echo "     -d DIR = Set destination directory to DIR."
     echo "         -h = Print this message and exit."
     echo "         -p = Set public permissions on files."
     echo "         -t = Test mode.  Do not actually make any changes. Implies -v."
@@ -28,8 +29,10 @@ test=false
 verbose=false
 dir_perm='2750'
 file_perm='0640'
-while getopts hptvV argname; do
+dst=/net/archive/hlsp/desi/public/dr2/spectro/data
+while getopts d:hptvV argname; do
     case ${argname} in
+        d) dst=${OPTARG} ;;
         h) usage; exit 0 ;;
         p) dir_perm='2755'; file_perm='0644' ;;
         t) test=true; verbose=true ;;
@@ -56,11 +59,9 @@ if [[ -z "${DESISYNC_HOSTNAME}" ]]; then
     exit 1
 fi
 #
-# Set up source and destination.
+# Set up source.
 #
 src="rsync://${DESISYNC_HOSTNAME}/desi/spectro/data"
-# dst=/net/incoming/desi/spectro/data
-dst=/net/archive/hlsp/desi/public/dr2/spectro/data
 if ${test}; then
     dry_run='--dry-run'
 else
