@@ -94,23 +94,27 @@ for n in $(<${nights}); do
     done
     if ${resync}; then
         #
-        # Permission unlock
+        # Permission unlock if data are already public.
         #
-        ${verbose} && echo "DEBUG: chmod -R u+w ${dst}/${night}"
-        ${test} || chmod -R u+w ${dst}/${night}
+        if [[ "${file_perm}" == '0644' ]]; then
+            ${verbose} && echo "DEBUG: chmod -R u+w ${dst}/${night}"
+            ${test} || chmod -R u+w ${dst}/${night}
+        fi
         #
         # Sync the night.
         #
         ${verbose} && echo "DEBUG: /usr/bin/rsync --archive --checksum --verbose --delete --delete-after --no-motd --password-file ${HOME}/.desi ${dry_run} ${src}/${night}/ ${dst}/${night}/"
         /usr/bin/rsync --archive --checksum --verbose --delete --delete-after --no-motd --password-file ${HOME}/.desi ${dry_run} ${src}/${night}/ ${dst}/${night}/
         #
-        # Permission lock
+        # Permission lock if data are already public.
         #
-        ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod ${file_perm} \{\} \;"
-        ${test} || find ${dst}/${night} -type f -exec chmod ${file_perm} \{\} \;
-        ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod ${dir_perm} \{\} \;"
-        ${test} || find ${dst}/${night} -type f -exec chmod ${dir_perm} \{\} \;
-        ${verbose} && echo "DEBUG: chmod -R u-w ${dst}/${night}"
-        ${test} || chmod -R u-w ${dst}/${night}
+        if [[ "${file_perm}" == '0644' ]]; then
+            ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod ${file_perm} \{\} \;"
+            ${test} || find ${dst}/${night} -type f -exec chmod ${file_perm} \{\} \;
+            ${verbose} && echo "DEBUG: find ${dst}/${night} -type f -exec chmod ${dir_perm} \{\} \;"
+            ${test} || find ${dst}/${night} -type f -exec chmod ${dir_perm} \{\} \;
+            ${verbose} && echo "DEBUG: chmod -R u-w ${dst}/${night}"
+            ${test} || chmod -R u-w ${dst}/${night}
+        fi
     fi
 done
