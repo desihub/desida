@@ -83,9 +83,9 @@ for n in $(<${nights}); do
         # Some EDR exposures have an older checksum filename format.
         #
         old_c=checksum-${night}-${exposure}.sha256sum
-        if [[ -f ${e}/${c} || -f ${e}/${alt_c} ]]; then
-            if [[ -f ${e}/${alt_c} ]]; then
-                c=${alt_c}
+        if [[ -f ${e}/${c} || -f ${e}/${old_c} ]]; then
+            if [[ -f ${e}/${old_c} ]]; then
+                c=${old_c}
             fi
             ${verbose} && echo "DEBUG: (cd ${e}; validate ${c})"
             (cd ${e}; validate ${c})
