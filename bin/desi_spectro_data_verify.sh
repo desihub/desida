@@ -79,7 +79,14 @@ for n in $(<${nights}); do
     for e in ${dst}/${night}/*; do
         exposure=$(basename ${e})
         c=checksum-${exposure}.sha256sum
-        if [[ -f ${e}/${c} ]]; then
+        #
+        # Some EDR exposures have an older checksum filename format.
+        #
+        old_c=checksum-${night}-${exposure}.sha256sum
+        if [[ -f ${e}/${c} || -f ${e}/${alt_c} ]]; then
+            if [[ -f ${e}/${alt_c} ]]; then
+                c=${alt_c}
+            fi
             ${verbose} && echo "DEBUG: (cd ${e}; validate ${c})"
             (cd ${e}; validate ${c})
             if [[ $? == 0 ]]; then
