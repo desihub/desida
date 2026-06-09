@@ -177,20 +177,24 @@ done
 #
 # healpix, tiles
 #
-for d in ${thisPix} tiles; do
+for d in ${thesePix} tiles; do
     for GROUP in ${d}/*; do
         # group=$(basename ${GROUP})
         if [[ -d ${GROUP} ]]; then
             for dd in $(find ${GROUP} -type d); do
-                if [[ $(basename ${dd}) == "logs" ]]; then
-                    c='*'
+                if [[ ${dd} =~ ^spectra/(cmx|main|special|sv1|sv2|sv3)/(backup|bright|dark|other)$ ]]; then
+                    echo "INFO: Skipping ${dd} which should already have a special checksum script." >&2
                 else
-                    c='!(logs)'
-                fi
-                has_files=$(find ${dd} -maxdepth 1 -type f)
-                if [[ -n "${has_files}" ]]; then
-                    s=redux_${SPECPROD}_$(tr '/' '_' <<<${dd}).sha256sum
-                    create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${dd}/${s} "${c}"
+                    if [[ $(basename ${dd}) == "logs" ]]; then
+                        c='*'
+                    else
+                        c='!(logs)'
+                    fi
+                    has_files=$(find ${dd} -maxdepth 1 -type f)
+                    if [[ -n "${has_files}" ]]; then
+                        s=redux_${SPECPROD}_$(tr '/' '_' <<<${dd}).sha256sum
+                        create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${dd}/${s} "${c}"
+                    fi
                 fi
             done
         fi
