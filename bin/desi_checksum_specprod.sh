@@ -24,7 +24,7 @@ function usage() {
     echo "    -j JOBS    = Use JOBS directory to write batch files (default ${DESI_ROOT}/users/${USER}/jobs)."
     echo "    -s DIR     = Use DIR for temporary files (default ${SCRATCH})."
     echo "    -V         = Version. Print a version string and exit."
-    echo "    -z VERSION = Version of zcatalog (default 'v1')."
+    echo "    -z VERSION = Version of zcatalog (default 'v2')."
     echo ""
     echo "    SPECPROD = Spectroscopic Production run name, e.g. 'iron'."
     ) >&2
@@ -72,7 +72,8 @@ EOT
 #
 jobs=${DESI_ROOT}/users/${USER}/jobs
 scratch=${SCRATCH}
-zcat_version=v1
+zcat_version=v2
+thesePix=spectra
 while getopts hj:s:V argname; do
     case ${argname} in
         h) usage; exit 0 ;;
@@ -101,52 +102,86 @@ home=${DESI_SPECTRO_REDUX}/${SPECPROD}
 cd ${home}
 create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/redux_${SPECPROD}.sha256sum exposures-${SPECPROD}.\* tiles-${SPECPROD}.\* inventory-${SPECPROD}.\*
 #
-# tilepix.* files in healpix directory
+# tilepix.* files in healpix directory, or equivalent files in spectra directory.
 #
-create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/healpix/redux_${SPECPROD}_healpix.sha256sum tilepix.\*
+if [[ -d healpix ]]; then
+    thesePix=healpix
+    create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/healpix/redux_${SPECPROD}_healpix.sha256sum tilepix.\*
+elif [[ -d spectra ]]; then
+    for SURVEY in spectra/*; do
+        survey=$(basename ${SURVEY})
+        for PROGRAM in ${SURVEY}/*; do
+            program=$(basename ${PROGRAM})
+            create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/spectra/redux_${SPECPROD}_spectra_${survey}_${program}.sha256sum \*.fits \*.json
+        done
+    done
+else
+    thesePix=''
+    echo "WARNING: Could not find ${DESI_SPECTRO_REDUX}/${SPECPROD}/healpix or spectra!" >&2
+fi
 #
 # calibnight, exposure_tables
 #
 for d in calibnight exposure_tables nightqa; do
-    cd ${d}
-    for night in *; do
-        create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${d}/${night}/redux_${SPECPROD}_${d}_${night}.sha256sum \*
-    done
-    cd ..
+    if [[ -d ${d} ]]; then
+        for NIGHT in ${d}/*; do
+            night=$(basename ${NIGHT})
+            create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${d}/${night}/redux_${SPECPROD}_${d}_${night}.sha256sum \*
+        done
+    else
+        echo "WARNING: Could not find ${DESI_SPECTRO_REDUX}/${SPECPROD}/${d}!" >&2
+    fi
 done
 #
 # processing_tables, run, zcatalog
 #
 create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/processing_tables/redux_${SPECPROD}_processing_tables.sha256sum \*
 create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/run/redux_${SPECPROD}_run.sha256sum .
-create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/zcatalog/${zcat_version}/redux_${SPECPROD}_zcatalog_${zcat_version}.sha256sum '!(logs)'
-create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/zcatalog/${zcat_version}/logs/redux_${SPECPROD}_zcatalog_${zcat_version}_logs.sha256sum \*
-#
-# exposures, preproc
-#
-for d in exposures preproc; do
-    cd ${d}
-    for night in *; do
-        cd ${night}
-        for expid in *; do
-            if is_empty ${expid}; then
-                echo "WARNING: ${d}/${night}/${expid} is empty." >&2
-            else
-                create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${d}/${night}/${expid}/redux_${SPECPROD}_${d}_${night}_${expid}.sha256sum \*
-            fi
-        done
-        cd ..
+if (( ${zcat_version:1} > 1 )); then
+    for z in $(find zcatalog -type d); do
+        if [[ $(basename ${z}) == "exp_fibermap" ]]; then
+            c='*'
+        else
+            c='!(exp_fibermap)'
+        fi
+        has_files=$(find ${z} -maxdepth 1 -type f)
+        if [[ -n "${has_files}" ]]; then
+            s=redux_${SPECPROD}_$(tr '/' '_' <<<${z}).sha256sum
+            create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${z}/${s} "${c}"
+        fi
     done
-    cd ..
+else
+    create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/zcatalog/${zcat_version}/redux_${SPECPROD}_zcatalog_${zcat_version}.sha256sum '!(logs)'
+    create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/zcatalog/${zcat_version}/logs/redux_${SPECPROD}_zcatalog_${zcat_version}_logs.sha256sum \*
+fi
+#
+# exposures, preproc, etc.
+#
+for d in dark_preproc exposures preproc; do
+    if [[ -d ${d} ]]; then
+        for NIGHT in ${d}/*; do
+            night=$(basename ${NIGHT})
+            for EXPID in ${NIGHT}/*; do
+                expid=$(basename ${EXPID})
+                if is_empty ${expid}; then
+                    echo "WARNING: ${d}/${night}/${expid} is empty." >&2
+                else
+                    create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${d}/${night}/${expid}/redux_${SPECPROD}_${d}_${night}_${expid}.sha256sum \*
+                fi
+            done
+        done
+    else
+        echo "WARNING: Could not find ${DESI_SPECTRO_REDUX}/${SPECPROD}/${d}!" >&2
+    fi
 done
 #
 # healpix, tiles
 #
-for d in healpix tiles; do
-    cd ${d}
-    for group in *; do
-        if [[ -d ${group} ]]; then
-            for dd in $(find ${group} -type d); do
+for d in ${thisPix} tiles; do
+    for GROUP in ${d}/*; do
+        # group=$(basename ${GROUP})
+        if [[ -d ${GROUP} ]]; then
+            for dd in $(find ${GROUP} -type d); do
                 if [[ $(basename ${dd}) == "logs" ]]; then
                     c='*'
                 else
@@ -154,11 +189,10 @@ for d in healpix tiles; do
                 fi
                 has_files=$(find ${dd} -maxdepth 1 -type f)
                 if [[ -n "${has_files}" ]]; then
-                    s=redux_${SPECPROD}_${d}_$(tr '/' '_' <<<${dd}).sha256sum
-                    create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${d}/${dd}/${s} "${c}"
+                    s=redux_${SPECPROD}_$(tr '/' '_' <<<${dd}).sha256sum
+                    create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${dd}/${s} "${c}"
                 fi
             done
         fi
     done
-    cd ..
 done
