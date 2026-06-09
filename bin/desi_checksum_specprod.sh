@@ -112,7 +112,7 @@ elif [[ -d spectra ]]; then
         survey=$(basename ${SURVEY})
         for PROGRAM in ${SURVEY}/*; do
             program=$(basename ${PROGRAM})
-            create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/spectra/redux_${SPECPROD}_spectra_${survey}_${program}.sha256sum \*.fits \*.json
+            create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/spectra/${survey}/${program}/redux_${SPECPROD}_spectra_${survey}_${program}.sha256sum \*.fits \*.json
         done
     done
 else
@@ -163,10 +163,10 @@ for d in dark_preproc exposures preproc; do
             night=$(basename ${NIGHT})
             for EXPID in ${NIGHT}/*; do
                 expid=$(basename ${EXPID})
-                if is_empty ${expid}; then
-                    echo "WARNING: ${d}/${night}/${expid} is empty." >&2
+                if is_empty ${EXPID}; then
+                    echo "WARNING: ${EXPID} is empty." >&2
                 else
-                    create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${d}/${night}/${expid}/redux_${SPECPROD}_${d}_${night}_${expid}.sha256sum \*
+                    create_checksum_job ${DESI_SPECTRO_REDUX}/${SPECPROD}/${EXPID}/redux_${SPECPROD}_$(tr '/' '_' <<<${EXPID}).sha256sum \*
                 fi
             done
         done
