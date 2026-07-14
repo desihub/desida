@@ -57,9 +57,10 @@ if [[ ! -d ${DESI_SPECTRO_REDUX}/${SPECPROD} ]]; then
 fi
 for d in ${DESI_SPECTRO_REDUX}/${SPECPROD}/${directory}/*; do
     n=$(basename ${d})
-    job_name=redux_${SPECPROD}_$(tr '/' '_' <<<${directory})_${n}
-    ${verbose} && echo "DEBUG: job_name=${job_name}" >&2
-    cat > ${jobs}/${job_name}.sh <<EOT
+    if [[ -d ${d} ]]; then
+        job_name=redux_${SPECPROD}_$(tr '/' '_' <<<${directory})_${n}
+        ${verbose} && echo "DEBUG: job_name=${job_name}" >&2
+        cat > ${jobs}/${job_name}.sh <<EOT
 #!/bin/bash
 #SBATCH --account=desi
 #SBATCH --qos=xfer
@@ -74,6 +75,9 @@ hsi mkdir -p ${hpss_dir}/${SPECPROD}/${directory}
 htar -cvf ${hpss_dir}/${SPECPROD}/${directory}/${job_name}.tar -H crc:verify=all ${n}
 [[ \$? == 0 ]] && mv -v ${jobs}/${job_name}.sh ${jobs}/done
 EOT
-    ${verbose} && echo "DEBUG: chmod +x ${jobs}/${job_name}.sh" >&2
-    chmod +x ${jobs}/${job_name}.sh
+        ${verbose} && echo "DEBUG: chmod +x ${jobs}/${job_name}.sh" >&2
+        chmod +x ${jobs}/${job_name}.sh
+    else
+        ${verbose} && echo "DEBUG: ${d} is not a directory, skipping." >&2
+    fi
 done
