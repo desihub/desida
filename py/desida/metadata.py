@@ -23,9 +23,6 @@ import matplotlib.dates as mdates
 from desiutil.log import get_logger, DEBUG
 
 
-log = None
-
-
 class _Directory(object):
     """Simple class to store directory information.
 
@@ -159,9 +156,11 @@ class AnalyzeGrowth(dict):
         Last day of the data set.
     cadence : :class:`int`, optional
         Number of days to skip after `start_date`, default 1 day.
+    verbose : :class:`bool`, optional
+        If ``True`` set log level to ``DEBUG``.
     """
 
-    def __init__(self, start_date, end_date, cadence=1):
+    def __init__(self, start_date, end_date, cadence=1, verbose=False):
         super().__init__()
         self._user_directories = re.compile(r'desicollab/users/[^/]+$')
         self._start_date = start_date
@@ -169,6 +168,10 @@ class AnalyzeGrowth(dict):
         self._cadence_delta = datetime.timedelta(days=cadence)
         self._actual_start_date = None
         self._actual_end_date = None
+        if verbose:
+            self.log = get_logger(DEBUG)
+        else:
+            self.log = get_logger()
         self._load()
 
     def _load(self):
@@ -179,11 +182,11 @@ class AnalyzeGrowth(dict):
         :class:`dict`
             A container for a set of :class:`~desida.metadata.Directory` objects.
         """
-        log.debug("self._start_date = %s", repr(self._start_date))
+        self.log.debug("self._start_date = %s", repr(self._start_date))
         date = self._start_date
         while date <= self._end_date:
             d = date.strftime('%Y-%m-%d')
-            log.debug("d = '%s'", d)
+            self.log.debug("d = '%s'", d)
             if os.path.isfile(os.path.join(os.environ['DESI_ROOT'], 'metadata', f'{d}.json.gz')):
                 with gzip.open(os.path.join(os.environ['DESI_ROOT'], 'metadata', f'{d}.json.gz')) as j:
                     self[d] = json.load(j, object_hook=_DirectoryDecoder)
@@ -191,7 +194,7 @@ class AnalyzeGrowth(dict):
                 with open(os.path.join(os.environ['DESI_ROOT'], 'metadata', f'{d}.json')) as j:
                     self[d] = json.load(j, object_hook=_DirectoryDecoder)
             else:
-                log.warning("No file matching %s!", d)
+                self.log.warning("No file matching %s!", d)
             date += self.cadence
 
     @property
@@ -343,18 +346,18 @@ def _options():
                           description="Analyze and plot data growth over time.")
     prsr.add_argument('-c', '--cadence', metavar='N', type=int, default=1,
                       help="Sample the data every N days (default %(default)s day).")
+    prsr.add_argument('-e', '--end', metavar='YYYY-MM-DD', default=datetime.date.today().strftime('%Y-%m-%d'),
+                      help='End analysis with this date. If not specified, the current day will be used.')
     prsr.add_argument('-o', '--output', metavar='DIR', default=os.getcwd(),
                       help='Write output to DIR. If not specified the current directory will be used.')
     prsr.add_argument('-p', '--plot', metavar='DIR', nargs='+',
-                      help="Plot growth of one or more DIR.")
+                      help="Plot growth of one or more directories. Plots will be saved as PNG files in the output directory.")
+    prsr.add_argument('-s', '--start', metavar='YYYY-MM-DD', required=True,
+                      help='Start analysis with this date (required).')
     prsr.add_argument('-u', '--users', action='store_true',
                       help='Produce a summary report of user directory use.')
     prsr.add_argument('-v', '--verbose', action='store_true',
                       help='Print debug messages.')
-    prsr.add_argument('start', metavar='YYYY-MM-DD',
-                      help='Start analysis with this date.')
-    prsr.add_argument('end', metavar='YYYY-MM-DD',
-                      help='End analysis with this date.')
     return prsr.parse_args()
 
 
@@ -366,7 +369,6 @@ def main():
     :class:`int`
         An integer suitable for passing to :func:`sys.exit`.
     """
-    global log
     options = _options()
     if options.verbose:
         log = get_logger(DEBUG)
@@ -387,7 +389,8 @@ def main():
         return 1
     log.debug("growth = AnalyzeGrowth(%s, %s, %d)",
               repr(start_date), repr(end_date), options.cadence)
-    growth = AnalyzeGrowth(start_date, end_date, options.cadence)
+    growth = AnalyzeGrowth(start_date, end_date,
+                           cadence=options.cadence, verbose=options.verbose)
     if options.plot is not None:
         for directory in options.plot:
             filesystem = directory.split('/')[0]
