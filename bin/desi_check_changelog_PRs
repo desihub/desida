@@ -127,7 +127,7 @@ no additional scope options selected.""",
 
     p.add_argument("repo_url",
                    help="Repo name (e.g. desispec) or full URL (e.g. https://github.com/desihub/desispec)")
-    p.add_argument("--token", help="GitHub personal access token (optional).")
+    p.add_argument("-t", "--token", help="GitHub personal access token (optional).")
     p.add_argument("--after", type=int, default=None,
                    help="Only show PRs with number greater than this value.")
     p.add_argument("--verbose", action="store_true",

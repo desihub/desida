@@ -6,6 +6,7 @@ tag listing with dates, merged-PR listing, and small helpers.
 """
 from __future__ import annotations
 
+import os
 import time
 import sys
 from datetime import datetime, timezone
@@ -65,13 +66,27 @@ def github_get(url, token=None, params=None, timeout=30):
         requests.HTTPError: For non-retryable HTTP errors.
     """
     headers = {"Accept": "application/vnd.github+json"}
-    if token:
+    if token is None and 'GITHUB_TOKEN' in os.environ:
+        token = os.environ['GITHUB_TOKEN']
+
+    # raw.githubusercontent.com serves public files without auth, and an
+    # invalid/expired token there produces a misleading 404 instead of a
+    # 401, so only attach auth for the actual GitHub API.
+    if token and urlparse(url).netloc == urlparse(GITHUB_API).netloc:
         headers["Authorization"] = f"token {token}"
 
     for attempt in range(3):
         resp = requests.get(url, headers=headers, params=params, timeout=timeout)
         if resp.status_code == 200:
             return resp
+
+        if resp.status_code == 401:
+            raise RuntimeError(
+                f"GitHub rejected the credentials (401 Bad credentials) for {url}. "
+                "Your token (from --token or the GITHUB_TOKEN environment variable) is "
+                "invalid or expired; generate a new one at https://github.com/settings/tokens "
+                "or unset GITHUB_TOKEN to use unauthenticated requests."
+            )
 
         if resp.status_code == 403:
             # Secondary rate limit may include Retry-After
