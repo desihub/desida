@@ -1,25 +1,33 @@
 #!/usr/bin/env python3
 """
 Compare closed pull-requests of a GitHub repo with the PR numbers that appear
-in its ``doc/changes.rst`` file.
+in its changelog file (``doc/changes.rst`` by default).
 
 Features added
 --------------
 * ``--after N`` - only list PRs whose number is greater than *N*.
-* ``--verbose`` - emit reStructuredText blocks ready to be pasted into
-    ``changes.rst``.  Each block contains a bullet with the PR title and the
-    reference link.
+* ``--verbose`` - emit changelog-ready blocks (reST or Markdown, matching the
+    changelog's own format) ready to be pasted into the changelog. Each block
+    contains a bullet with the PR title and the reference link.
+* ``--changelog-path`` - check a changelog file other than ``doc/changes.rst``,
+    e.g. ``CHANGES.md`` or ``CHANGELOG.md``. The format (reST vs Markdown) is
+    inferred from the file extension unless overridden with ``--format``.
 
 Usage
 -----
         python compare_closed_prs.py REPO_URL [--token TOKEN] [--after N]
                                               [--verbose] [--output FILE]
+                                              [--changelog-path PATH]
 
 * ``REPO_URL`` - e.g. ``desispec`` or ``https://github.com/desihub/desispec``.
 * ``--token`` - optional personal-access token (avoids rate-limit).
 * ``--after`` - only show PRs with a number > N.
-* ``--verbose`` - produce RST entries instead of a plain number list.
+* ``--verbose`` - produce changelog entries instead of a plain number list.
 * ``--output`` - write the result to a file; otherwise prints to stdout.
+* ``--changelog-path`` - path (relative to repo root) of the changelog file
+    to check, e.g. ``CHANGES.md``. Default: ``doc/changes.rst``.
+* ``--format`` - force ``rst`` or ``md`` parsing/output instead of inferring
+    it from ``--changelog-path``'s extension.
 * ``--debug`` - start IPython prompt at end instead of exiting
 
 Written by LBL CBorg Coder AI with prompts from Stephen Bailey
@@ -40,24 +48,40 @@ from desida.github import parse_repo_url, github_get, get_merged_prs, get_tags_w
 GITHUB_API = "https://api.github.com"
 RAW_CONTENT = "https://raw.githubusercontent.com"
 PER_PAGE = 100  # max permitted by GitHub
+DEFAULT_CHANGELOG_PATH = "doc/changes.rst"
 
 
-def fetch_changes_rst(owner, repo, token=None):
-    """Download doc/changes.rst from the repo main branch.
+def detect_format(changelog_path):
+    """Infer changelog format from its file extension.
+
+    Args:
+        changelog_path (str): Path to the changelog file, e.g. "CHANGES.md".
+
+    Returns:
+        str: "md" for Markdown, "rst" for everything else (default).
+    """
+    suffix = Path(changelog_path).suffix.lower()
+    return "md" if suffix in (".md", ".markdown") else "rst"
+
+
+def fetch_changes_file(owner, repo, changelog_path, token=None):
+    """Download a changelog file from the repo main branch.
 
     Args:
         owner (str): GitHub org or user name, e.g. "desihub".
         repo (str): GitHub repository name, e.g. "desispec".
+        changelog_path (str): Path to the changelog file within the repo,
+            e.g. "doc/changes.rst" or "CHANGES.md".
         token (str or None): Optional GitHub token.
 
     Returns:
-        str: The contents of doc/changes.rst.
+        str: The contents of the changelog file.
 
     Raises:
         requests.HTTPError: If the GitHub request fails.
         RuntimeError: If rate limiting or retries fail in GitHub helper.
     """
-    raw_url = f"{RAW_CONTENT}/{owner}/{repo}/main/doc/changes.rst"
+    raw_url = f"{RAW_CONTENT}/{owner}/{repo}/main/{changelog_path}"
     return github_get(raw_url, token=token).text
 
 
@@ -84,31 +108,49 @@ def group_prs_by_next_tag(prs, tags):
 
 
 # ----------------------------------------------------------------------
-# Parsing ``changes.rst`` for tag numbers; supports either
-# .. _`PR #864`: https://github.com/desihub/desitarget/pull/864
-# .. _`#225`: https://github.com/desihub/desiutil/pull/225
+# Parsing changelog PR references. Two formats are supported:
+#
+# reST hyperlink targets (e.g. doc/changes.rst):
+#   .. _`PR #864`: https://github.com/desihub/desitarget/pull/864
+#   .. _`#225`: https://github.com/desihub/desiutil/pull/225
+#
+# Markdown inline links (e.g. CHANGES.md, CHANGELOG.md):
+#   PR [#86](https://github.com/desihub/specex/pull/86)
 # ----------------------------------------------------------------------
 
-_LINE_RE = re.compile(
+_RST_LINE_RE = re.compile(
     r"""^\s*\.\.\s+_`[^`]+`:\s+https?://github\.com/"""
     r"""(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<num>\d+)\s*$"""
 )
 
+_MD_LINK_RE = re.compile(
+    r"""\[#\d+\]\(https?://github\.com/"""
+    r"""(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<num>\d+)\)"""
+)
 
-def parse_pr_numbers_from_changes(content, expected_owner, expected_repo):
-    """Extract PR numbers from GitHub links in changes text.
+
+def parse_pr_numbers_from_changes(content, expected_owner, expected_repo, fmt="rst"):
+    """Extract PR numbers from GitHub links in changelog text.
 
     Args:
-        content (str): Full text of doc/changes.rst.
+        content (str): Full text of the changelog file.
         expected_owner (str): Expected GitHub org or user, e.g. "desihub".
         expected_repo (str): Expected repo name, e.g. "desispec".
+        fmt (str): "rst" for reST hyperlink targets, "md" for Markdown
+            inline links.
 
     Returns:
         set[int]: PR numbers referenced in the file.
     """
     found: Set[int] = set()
+    if fmt == "md":
+        for m in _MD_LINK_RE.finditer(content):
+            if m.group("owner") == expected_owner and m.group("repo") == expected_repo:
+                found.add(int(m.group("num")))
+        return found
+
     for line in content.splitlines():
-        m = _LINE_RE.match(line.rstrip())
+        m = _RST_LINE_RE.match(line.rstrip())
         if m and m.group("owner") == expected_owner and m.group("repo") == expected_repo:
             found.add(int(m.group("num")))
     return found
@@ -127,16 +169,24 @@ no additional scope options selected.""",
 
     p.add_argument("repo_url",
                    help="Repo name (e.g. desispec) or full URL (e.g. https://github.com/desihub/desispec)")
-    p.add_argument("--token", help="GitHub personal access token (optional).")
+    p.add_argument("-t", "--token", help="GitHub personal access token (optional).")
     p.add_argument("--after", type=int, default=None,
                    help="Only show PRs with number greater than this value.")
     p.add_argument("--verbose", action="store_true",
-                   help="Output reStructuredText entries ready for changes.rst.")
+                   help="Output changelog entries (reST or Markdown) ready for the changelog file.")
     p.add_argument("-o", "--output", type=Path, default=None,
                    help="Write result to this file; otherwise print to stdout.")
+    p.add_argument("-c", "--changelog-path", default=DEFAULT_CHANGELOG_PATH,
+                   help=f"Path (relative to repo root) of the changelog file to check, "
+                        f"e.g. CHANGES.md. Default: {DEFAULT_CHANGELOG_PATH}")
+    p.add_argument("--format", choices=("rst", "md"), default=None,
+                   help="Force reST or Markdown parsing/output instead of inferring it "
+                        "from --changelog-path's extension.")
     p.add_argument("--debug", action="store_true",
                    help="Start IPython prompt at end instead of exiting.")
     args = p.parse_args()
+
+    fmt = args.format or detect_format(args.changelog_path)
 
     # ------------------------------------------------------------------
     # Resolve owner/repo
@@ -147,11 +197,11 @@ no additional scope options selected.""",
         p.error(str(e))
 
     # ------------------------------------------------------------------
-    # Parse changes.rst
+    # Parse the changelog file
     # ------------------------------------------------------------------
-    changes_text = fetch_changes_rst(owner, repo, token=args.token)
-    file_prs = parse_pr_numbers_from_changes(changes_text, owner, repo)
-    print(f"Found {len(file_prs)} PR references in doc/changes.rst", file=sys.stderr)
+    changes_text = fetch_changes_file(owner, repo, args.changelog_path, token=args.token)
+    file_prs = parse_pr_numbers_from_changes(changes_text, owner, repo, fmt=fmt)
+    print(f"Found {len(file_prs)} PR references in {args.changelog_path}", file=sys.stderr)
 
     # ------------------------------------------------------------------
     # Get all merged PR numbers from GitHub
@@ -165,7 +215,7 @@ no additional scope options selected.""",
     missing_prs = {num: dt for num, dt in merged_prs.items() if num not in file_prs}
     if args.after is not None:
         missing_prs = {num: dt for num, dt in missing_prs.items() if num > args.after}
-    print(f"{len(missing_prs)} merged PRs are NOT mentioned in changes.rst after filtering.",
+    print(f"{len(missing_prs)} merged PRs are NOT mentioned in {args.changelog_path} after filtering.",
           file=sys.stderr)
 
     # ------------------------------------------------------------------
@@ -180,7 +230,7 @@ no additional scope options selected.""",
     # ------------------------------------------------------------------
     out_lines: list[str] = []
     if args.verbose:
-        # Verbose mode prints a ready-to-paste reST block.
+        # Verbose mode prints a ready-to-paste block in the changelog's own format.
         for tag, pr_nums in grouped.items():
             # Tag header; use Pacific Time not UTC
             if tag != 'NO_TAG':
@@ -190,6 +240,16 @@ no additional scope options selected.""",
                 tagdate = 'unreleased'
 
             line = f"{tag} ({tagdate})"
+
+            if fmt == "md":
+                out_lines.append(f"\n## {line}\n\n")
+                for num in sorted(pr_nums):
+                    title = get_pr_title(owner, repo, num, token=args.token)
+                    url = f"https://github.com/{owner}/{repo}/pull/{num}"
+                    out_lines.append(f"* {title} (PR [#{num}]({url})).\n")
+                out_lines.append("\n")
+                continue
+
             out_lines.append(f"\n{line}\n")
             out_lines.append("-"*len(line) + "\n")
 
