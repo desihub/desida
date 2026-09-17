@@ -71,7 +71,9 @@ def github_get(url, token=None, params=None, timeout=30):
     # raw.githubusercontent.com serves public files without auth, and an
     # invalid/expired token there produces a misleading 404 instead of a
     # 401, so only attach auth for the actual GitHub API.
-    if token and urlparse(url).netloc == urlparse(GITHUB_API).netloc:
+    parsed_url = urlparse(url)
+    api_url = urlparse(GITHUB_API)
+    if token and parsed_url.scheme == api_url.scheme and parsed_url.netloc == api_url.netloc:
         headers["Authorization"] = f"token {token}"
 
     for attempt in range(3):
