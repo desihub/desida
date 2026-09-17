@@ -62,8 +62,7 @@ def github_get(url, token=None, params=None, timeout=30):
         requests.Response: Successful response.
 
     Raises:
-        RuntimeError: If rate limited or retries fail.
-        requests.HTTPError: For non-retryable HTTP errors.
+        RuntimeError: If rate limited, retries fail, or other fatal HTTP errors.
     """
     headers = {"Accept": "application/vnd.github+json"}
     if token is None and 'GITHUB_TOKEN' in os.environ:
