@@ -218,6 +218,9 @@ no additional scope options selected.""",
     print(f"{len(missing_prs)} merged PRs are NOT mentioned in {args.changelog_path} after filtering.",
           file=sys.stderr)
 
+    if len(missing_prs) == 0:
+        return
+
     # ------------------------------------------------------------------
     # Load tags (chronological) and group PRs by first tag after merge
     # ------------------------------------------------------------------
